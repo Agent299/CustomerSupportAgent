@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Owner | Solo developer |
-| Status | Phase 0 (foundation) |
+| Status | Phase 1 (ingestion) in progress |
 | Last updated | 2026-10-17 |
 | Hosting | Render (API + static UI + Key Value) with free managed datastores |
 
@@ -43,7 +43,7 @@ Developers ask questions about MongoDB in a web chat widget after they sign in w
 ## 2. Scope
 
 **In scope (MVP)**
-- Knowledge source: public MongoDB docs for the **current release and the two previous major/minor releases**, with version filtering.
+- Knowledge source: the public MongoDB server manual for **9.0 (current), 8.0 and 7.0**, using MongoDB's official Markdown pages, with version filtering (ADR 0015).
 - Channel: an embeddable **web chat widget**.
 - Customers sign in with **email verification** (passwordless one-time code).
 - Escalation goes to a **custom agent console**: queue, AI summary, transcript, live takeover, resolution.
@@ -95,6 +95,7 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | D12 | **Version-aware, content-hash-deduplicated chunks** | Supports several versions without multiplying storage. This matters because the free-tier quotas are small. |
 | D13 | **Passwordless email-code auth that we build ourselves** | It's small, and it's the same mechanism for customers and agents (an agent is a user with a role). |
 | D14 | **Render for compute; free managed services for state** | Your hosting choice. Stateful services aren't free on Render (see §9). |
+| D15 | **Ingest MongoDB's official `.md` pages instead of HTML** | Every page has an official Markdown twin (about 80× smaller), and `llms.txt` invites agents to use it. Heading-exact, deterministic chunking. |
 
 ## 5. LLM usage policy
 
@@ -180,7 +181,7 @@ Later optimization: if evals show a cheaper model passes on a category (e.g. FAQ
 | Relational | **PostgreSQL** (18 locally, Neon Free in production) | Users, tickets, messages, chunks, outbox, evals |
 | Cache / pub-sub | **Valkey** locally, Render Key Value in production (Redis protocol) | Sessions, caches, coalescing, quotas, SSE fan-out |
 | Object storage | S3 API: **Cloudflare R2** (prod), local filesystem/R2 dev bucket | 10 GB free, no egress fees |
-| HTML parsing | `httpx`, `selectolax` / `trafilatura`, `tiktoken` | Parsing that preserves headings; accurate token counts |
+| Source fetching and parsing | `httpx`, `defusedxml` (sitemaps), stdlib `robotparser`, heading-aware Markdown chunker, `tiktoken` | Official `.md` pages need no HTML parser (ADR 0015); accurate token counts |
 | PII | **Presidio** (pattern recognizers only) + custom regex | Deterministic, light enough for 512 MB |
 | Resilience | `tenacity` (backoff), a small custom circuit breaker | Trips on latency as well as errors |
 | Email | **Resend** (3,000 / month, 100 / day free) | Verification codes |
@@ -359,14 +360,14 @@ Key Value on Render's free plan is in-memory only. **Nothing durable lives only 
 ### 8.5 Ingestion pipeline
 
 1. **Scheduler.**
-   - For each configured version, read MongoDB's docs sitemap(s) and compare entries with `documents` by `lastmod` and hash.
+   - For each configured version, read `/docs/<path>/sitemap-0.xml` (`manual` = 9.0, `v8.0`, `v7.0`) and compare entries with `documents`. The sitemaps have no `lastmod`, so changes are detected by a SHA-256 of each page's Markdown.
    - Emit UPSERT events for new or changed pages and DELETE events for removed ones.
    - Drain `ingest_outbox` into the same topic.
    - Triggers: nightly cron, manual dispatch, or a webhook outbox row.
    - Freshness SLA: ≤ 24 h.
 2. **Crawl + chunk worker.**
-   - Fetch politely: robots.txt, about 2 req/s, cached ETags. Save the raw HTML snapshot to R2.
-   - Parse into a heading tree. Chunk along headings at **256–512 tokens**, keep code blocks whole, and overlap about 10% only when a section has to be split.
+   - Fetch `<page>.md` politely: robots.txt, about 2 req/s, retries with backoff. The `.md` pages have no ETag. Save the raw snapshot to R2.
+   - Parse the Markdown into a heading tree, ignoring `#` inside code fences, and normalize version-specific links to a `{docs_version}` placeholder. Chunk along headings at **256–512 tokens**, keep code blocks whole, and overlap about 10% only when a section has to be split.
    - Set the breadcrumb, e.g. `Indexes > Unique Indexes > Behavior`.
    - Redact PII.
    - `chunk_id = sha256(normalized text)[:16]`. If the chunk already exists, add a `chunk_occurrences` row for the new version (dedupe, D12). Otherwise insert it.
@@ -492,9 +493,9 @@ OPEN ──► BOT_ACTIVE ──► RESOLVED_BY_BOT ──► CLOSED
 
 | Store | Estimated need (3 versions, deduplicated) | Free limit |
 |---|---|---|
-| Neon Postgres | ~90k chunks × ~2 KB ≈ 180 MB + app data | 0.5 GB |
-| AuraDB nodes | ~90k chunks + ~25k sections + ~18k docs + ~20k entities ≈ 150k | 200k |
-| AuraDB relationships | IS_PART_OF ~115k + MENTIONS (≤ 8/chunk, avg ~2.5) ~225k + others ~40k ≈ 380k | 400k (**tight**) |
+| Neon Postgres | **Measured (Phase 1 sample):** ~5.6 chunks/page, avg 200 tokens, 47%+ cross-version dedupe → ~34k occurrences, ~15–18k unique chunks ≈ 40 MB + app data | 0.5 GB |
+| AuraDB nodes | ~18k chunks + ~25k sections + ~6k docs + ~20k entities ≈ 70k (revised down from 150k) | 200k |
+| AuraDB relationships | IS_PART_OF ~43k + MENTIONS (≤ 8/chunk, avg ~2.5) ~45k + others ~40k ≈ 130k (revised down from 380k) | 400k (comfortable) |
 | Aiven OpenSearch | ~90k × 1536-d float vectors ≈ 0.55 GB + text ≈ 1 GB | 20 GB / 4 GB RAM |
 
 If AuraDB fills up: lower the MENTIONS cap, drop the oldest version, or skip Chunk nodes for boilerplate pages.
@@ -590,8 +591,8 @@ Every phase ends with something demo-able for the portfolio.
 | Item | Status / action |
 |---|---|
 | MongoDB docs licence terms | Verify CC BY-NC-SA and attribution wording before going public |
-| MongoDB docs URL / sitemap scheme per version | Investigate at the start of Phase 1 |
-| AuraDB relationship quota is tight | Monitor during the Phase 3 backfill; mitigations in §9.3 |
+| MongoDB docs URL / sitemap scheme per version | **Resolved**: see ADR 0015 |
+| AuraDB relationship quota | Measured chunk counts put it at about ⅓ of the quota; still monitor during the Phase 3 backfill |
 | Render Hobby bandwidth and cold starts | Monitor; keep-warm ping if needed |
 | Aiven free OpenSearch may pause when inactive | Readiness check + resume procedure in the runbook |
 | Free-tier terms change without notice | Everything is reproducible from `render.yaml` + Compose; datastores can be swapped via environment variables |
