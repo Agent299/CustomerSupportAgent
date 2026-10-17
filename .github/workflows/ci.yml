@@ -19,6 +19,17 @@ jobs:
     name: Backend (lint, types, tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:  # integration tests (tests/conftest.py) fail, not skip, in CI
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: support
+          POSTGRES_PASSWORD: support
+          POSTGRES_DB: support
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U support -d support"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     defaults:
       run:
         working-directory: backend
@@ -36,6 +47,7 @@ jobs:
       - run: uv run pytest
         env:
           APP_ENV: ci
+          TEST_ADMIN_DSN: postgresql://support:support@localhost:5432/support
 
   web:
     name: Web (lint, build)
