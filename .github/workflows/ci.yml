@@ -4,21 +4,31 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same branch/PR cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    name: Backend (lint, types, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
+          working-directory: backend
           enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -28,14 +38,18 @@ jobs:
           APP_ENV: ci
 
   web:
-    runs-on: ubuntu-latest
+    name: Web (lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json   # pnpm version comes from "packageManager"
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -45,7 +59,29 @@ jobs:
       - run: pnpm build
 
   docker:
-    runs-on: ubuntu-latest
+    name: API image build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: docker build -t support-agent-api backend
+
+  # Single, stable check name for the main-branch ruleset to require.
+  # Add new jobs to `needs` and they automatically become merge requirements.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [backend, web, docker]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every required job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then
+              echo "::error::A required CI job did not succeed ($r)"
+              exit 1
+            fi
+          done
