@@ -9,7 +9,7 @@ The design is based on Chapter 6 of *Systems Design for the LLM Era*. This is a 
 
 ## Stack
 
-FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Render
+FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Caddy · Oracle Cloud (Always Free, arm64)
 
 ## Quick start
 
@@ -31,6 +31,10 @@ make check                # lint + types + tests + web build (same as CI)
 | OpenSearch | http://localhost:9200 |
 | Neo4j Browser | http://localhost:7474 (neo4j / localdevpassword) |
 | Kafka API (Redpanda) | localhost:19092 |
+
+## Deployment
+
+Production runs on one Oracle Cloud Always Free Ampere A1 VM: Docker Compose, with Caddy at the edge. A merge to `main` deploys automatically once CI passes. See [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Contributing workflow
 

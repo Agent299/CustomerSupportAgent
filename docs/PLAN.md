@@ -7,7 +7,7 @@
 | Owner | Solo developer |
 | Status | Phase 1 (ingestion) in progress |
 | Last updated | 2026-10-17 |
-| Hosting | Render (API + static UI + Key Value) with free managed datastores |
+| Hosting | One Oracle Cloud Always Free Ampere A1 VM (Docker Compose, Caddy) |
 
 ---
 
@@ -82,7 +82,7 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | ID | Decision | Rationale |
 |---|---|---|
 | D1 | **Keep the event-driven topics and replace Spark/Glue with Python workers** | About 6k pages per version and roughly 100 changes a day don't justify a JVM cluster. Keeping the topic contracts means Spark could be swapped back in without touching anything downstream. |
-| D2 | **A modular monolith:** one core API holds chat, orchestrator, genai, tickets and auth as packages; workers run as separate batch jobs | Every network hop eats into the 3 s budget. One deployable fits a solo developer and Render's free tier. The package boundaries let us split it later. |
+| D2 | **A modular monolith:** one core API holds chat, orchestrator, genai, tickets and auth as packages; workers run as separate processes | Every network hop eats into the 3 s budget. One deployable fits a solo developer and a single VM. The package boundaries let us split it later. |
 | D3 | **Hybrid BM25 + kNN in OpenSearch** | Identifiers like `E11000` and `$lookup` need lexical matching. One engine does both in a single query. |
 | D4 | **Embed `breadcrumb + chunk text + entities`** | Embedding only metadata throws away the wording semantic search relies on. The breadcrumb keeps the chapter's "smart chunking" benefit. |
 | D5 | **Chunk text lives in Postgres; object storage holds only raw page snapshots** | Fetching the top-K chunks is one SQL round trip instead of K S3 GETs. Snapshots allow re-chunking without re-crawling. |
@@ -92,9 +92,9 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | D9 | **A thin GenAI client of our own on the official `openai` SDK** (retries, circuit breaker, model fallback) | Gives the chapter's resilience without a heavy proxy dependency. |
 | D10 | **Explicit latency budgets** (§10) | Reconciles G1. |
 | D11 | **Deterministic first; cheapest capable model for easy tasks; frontier model only for complex tasks** | Cost control. See §5. |
-| D12 | **Version-aware, content-hash-deduplicated chunks** | Supports several versions without multiplying storage. This matters because the free-tier quotas are small. |
+| D12 | **Version-aware, content-hash-deduplicated chunks** | Supports several versions without multiplying storage, embedding cost or index size. |
 | D13 | **Passwordless email-code auth that we build ourselves** | It's small, and it's the same mechanism for customers and agents (an agent is a user with a role). |
-| D14 | **Render for compute; free managed services for state** | Your hosting choice. Stateful services aren't free on Render (see §9). |
+| D14 | **One Oracle Cloud Always Free VM runs the whole stack** ([ADR 0016](adr/0016-oracle-cloud-single-vm.md), supersedes the Render plan in ADR 0014) | The planned architecture runs as designed (real Redpanda, OpenSearch, Neo4j). No cold starts or third-party quotas, one origin for UI and API, $0 hosting. |
 | D15 | **Ingest MongoDB's official `.md` pages instead of HTML** | Every page has an official Markdown twin (about 80× smaller), and `llms.txt` invites agents to use it. Heading-exact, deterministic chunking. |
 
 ## 5. LLM usage policy
@@ -157,14 +157,14 @@ Later optimization: if evals show a cheaper model passes on a category (e.g. FAQ
    │ diff +    │               │ PII redact,  │                   │ entities,   │
    │ outbox    │               │ chunk, dedupe│                   │ embeddings  │
    └───────────┘               │ → Postgres,  │                   │ → OpenSearch│
-                               │   R2 snapshot│                   │ → Neo4j     │
+                               │   snapshot   │                   │ → Neo4j     │
                                └──────────────┘                   └─────────────┘
-   Observability: OpenTelemetry → Grafana Cloud (metrics/logs) · Langfuse Cloud (LLM traces, cost, scores)
+   Edge: Caddy (TLS, static UI, /api proxy) · Observability: JSON logs now; OpenTelemetry + Langfuse in Phase 5
 ```
 
 **Two paths, as in the chapter**
 - **Query path (synchronous):** widget → core API → caches and retrieval → OpenAI → answer streamed over SSE, or escalation to the console.
-- **Ingestion path (asynchronous):** never runs inside the query path. Locally it uses Docker Compose. In production it runs as a scheduled GitHub Actions job with Redpanda as a service container (see §9).
+- **Ingestion path (asynchronous):** never runs inside the query path. In production the workers run continuously on the VM and consume Redpanda; a nightly timer schedules the sitemap diff (see §9).
 
 ## 7. Technology stack
 
@@ -177,20 +177,21 @@ Later optimization: if evals show a cheaper model passes on a category (e.g. FAQ
 | LLM | **OpenAI** (`openai` SDK), task-tiered per §5 | User choice; structured outputs; Batch API for ingestion |
 | Event bus | **Redpanda** (Kafka API) via `aiokafka` | Single container, no ZooKeeper; same client code as Kafka/MSK |
 | Search | **OpenSearch 3.x**: k-NN (HNSW, cosine) + BM25 + hybrid normalization processor | Lexical + semantic in one query; the chapter's engine |
-| Graph | **Neo4j** (Community locally, AuraDB Free in production) + Cypher | Neptune equivalent with mature tooling |
-| Relational | **PostgreSQL** (18 locally, Neon Free in production) | Users, tickets, messages, chunks, outbox, evals |
-| Cache / pub-sub | **Valkey** locally, Render Key Value in production (Redis protocol) | Sessions, caches, coalescing, quotas, SSE fan-out |
-| Object storage | S3 API: **Cloudflare R2** (prod), local filesystem/R2 dev bucket | 10 GB free, no egress fees |
+| Graph | **Neo4j Community** + Cypher | Neptune equivalent with mature tooling; self-hosted, no node/relationship quotas |
+| Relational | **PostgreSQL 18** | Users, tickets, messages, chunks, outbox, evals; the only state that needs backups |
+| Cache / pub-sub | **Valkey** (Redis protocol) | Sessions, caches, coalescing, quotas, SSE fan-out |
+| Raw page snapshots | Local volume on the VM; optional OCI Object Storage (Always Free, S3-compatible) later | Re-chunking without re-crawling |
 | Source fetching and parsing | `httpx`, `defusedxml` (sitemaps), stdlib `robotparser`, heading-aware Markdown chunker, `tiktoken` | Official `.md` pages need no HTML parser (ADR 0015); accurate token counts |
 | PII | **Presidio** (pattern recognizers only) + custom regex | Deterministic, light enough for 512 MB |
 | Resilience | `tenacity` (backoff), a small custom circuit breaker | Trips on latency as well as errors |
 | Email | **Resend** (3,000 / month, 100 / day free) | Verification codes |
-| Bot protection | **Cloudflare Turnstile** (free) | Protects the login form and the OpenAI budget |
-| Frontend | **Next.js** (App Router, **static export**), TypeScript, Tailwind CSS | Deploys as a free Render Static Site (CDN, no cold start) |
+| Bot protection | **Cloudflare Turnstile** (free; works on any host) | Protects the login form and the OpenAI budget |
+| Frontend | **Next.js** (App Router, **static export**), TypeScript, Tailwind CSS | Served by Caddy on the same origin as the API |
 | Evaluation | pytest-based golden-set runner, Ragas-style metrics, custom judge prompts | The chapter's three-part evaluation |
-| Observability | OpenTelemetry, structlog (JSON logs), **Grafana Cloud** free, **Langfuse Cloud** free | No self-hosted ClickHouse/Prometheus to fit on free compute |
+| Edge | **Caddy 2** | Automatic HTTPS, static files, reverse proxy with unbuffered SSE |
+| Observability | OpenTelemetry, structlog (JSON logs); Grafana + Langfuse (Phase 5, hosted free tier or self-hosted if RAM allows) | |
 | Testing | pytest, testcontainers, Playwright, **k6** load tests | Unit → integration → E2E → load |
-| Delivery | Docker Compose (local), GitHub Actions (CI + ingestion cron), **Render Blueprint** (`render.yaml`) | Reproducible, infrastructure as code |
+| Delivery | Docker Compose (local + prod), GitHub Actions (CI with native **arm64** image builds; CD over SSH), systemd timers | Reproducible, infrastructure as code |
 
 ## 8. Low-level design
 
@@ -212,7 +213,7 @@ CustomerSupportAgent/
 ├─ web/                    # Next.js: /widget, /console
 ├─ infra/docker-compose.yml
 ├─ docs/PLAN.md, docs/adr/
-├─ render.yaml             # Render Blueprint
+├─ deploy/oracle/          # prod compose, Caddyfile, bootstrap/deploy/backup, systemd timers
 └─ .github/workflows/      # ci.yml, ingest.yml (Phase 1)
 ```
 
@@ -339,7 +340,7 @@ llm_usage_daily(day date pk, cost_usd numeric)                              -- b
   - `Ticket`, `Resolution` (from D8).
 - **Relationships:**
   - From the chapter: `IS_PART_OF`, `REFERENCES`, `RESOLVES`, `HAS_ROOT_CAUSE`, `USES_COMPONENT`, `DEPENDS_ON`.
-  - Added: `MENTIONS` (Chunk→Entity), capped at the top 8 per chunk to stay within free-tier quotas.
+  - Added: `MENTIONS` (Chunk→Entity), capped at the top 8 per chunk to keep traversals focused.
   - Every edge stores `{source_context: chunk_id, confidence, extracted_by: 'rule'|'llm', kb_version}` for traceability.
 - **Constraints:** uniqueness on `id` per label; index on `Entity.canonical_name`.
 
@@ -355,7 +356,7 @@ llm_usage_daily(day date pk, cost_usd numeric)                              -- b
 | `quota:{user}:{day}`, `spend:{day}` | Per-user quota, global spend cap | 48 h |
 | `rl:{ip}`, `rl:{email}` | Rate limiting | window |
 
-Key Value on Render's free plan is in-memory only. **Nothing durable lives only in Redis**: sessions can be rebuilt from `messages` in Postgres.
+Valkey runs without persistence (`--save ""`). **Nothing durable lives only in Redis**: sessions can be rebuilt from `messages` in Postgres.
 
 ### 8.5 Ingestion pipeline
 
@@ -366,7 +367,7 @@ Key Value on Render's free plan is in-memory only. **Nothing durable lives only 
    - Triggers: nightly cron, manual dispatch, or a webhook outbox row.
    - Freshness SLA: ≤ 24 h.
 2. **Crawl + chunk worker.**
-   - Fetch `<page>.md` politely: robots.txt, about 2 req/s, retries with backoff. The `.md` pages have no ETag. Save the raw snapshot to R2.
+   - Fetch `<page>.md` politely: robots.txt, about 2 req/s, retries with backoff. The `.md` pages have no ETag. Raw snapshots are optional (local volume).
    - Parse the Markdown into a heading tree, ignoring `#` inside code fences, and normalize version-specific links to a `{docs_version}` placeholder. Chunk along headings at **256–512 tokens**, keep code blocks whole, and overlap about 10% only when a section has to be split.
    - Set the breadcrumb, e.g. `Indexes > Unique Indexes > Behavior`.
    - Redact PII.
@@ -459,51 +460,63 @@ OPEN ──► BOT_ACTIVE ──► RESOLVED_BY_BOT ──► CLOSED
   - A delete-my-data endpoint (GDPR).
 - **Prompt injection:** retrieved content is clearly delimited and never treated as instructions. Markdown is sanitized on render.
 - **Login protection:** JWTs are short-lived, refresh tokens are rotated and revocable, Turnstile protects the login form, and rate limits apply per email and per IP.
-- **Network:** CORS is restricted to the UI origin. The UI and API share a custom domain (e.g. `support.example.com` and `api.support.example.com`). `onrender.com` is a public suffix, so cookies can't be shared across `*.onrender.com` services.
-- **Secrets:** only in `.env` locally (git-ignored) and Render environment groups in production.
+- **Network:** UI and API are served from **one origin** by Caddy, so auth cookies are first-party and no CORS is needed in production. Only ports 80/443 are exposed; datastores listen on the internal Docker network only.
+- **Secrets:** `.env` locally and `deploy/oracle/.env` on the VM (git-ignored, `chmod 600`). Deploy SSH keys live in GitHub environment secrets.
 
 ## 9. Deployment and hosting
 
-### 9.1 Environments
+Everything runs on **one Oracle Cloud Always Free Ampere A1 VM** (arm64, 2 OCPU / 12 GB RAM, 200 GB block storage) with Docker Compose (D14, [ADR 0016](adr/0016-oracle-cloud-single-vm.md)). Runbook: [`docs/DEPLOY.md`](DEPLOY.md).
 
-| Concern | Local (Docker Compose) | Production (free tiers) |
+### 9.1 Topology
+
+```
+Internet ──80/443──▶ Caddy (TLS, static UI, /api proxy)  ─┐   one origin: no CORS,
+                                                           │   first-party cookies
+           ┌───────────────────────────────────────────────┘
+           ▼                     internal Docker network only
+          api ─▶ postgres · valkey · opensearch · neo4j
+  relay ─▶ redpanda ─▶ chunk-worker ─▶ redpanda ─▶ index-worker ─▶ opensearch
+  systemd timers: 02:00 schedule · 03:30 Postgres backup · 05:00 gc
+```
+
+### 9.2 Environments
+
+| Concern | Local (`infra/docker-compose.yml`) | Production (`deploy/oracle/docker-compose.prod.yml`) |
 |---|---|---|
-| Core API | `uvicorn` on the host or the `app` profile | **Render Web Service (free)**, Docker, 512 MB / 0.1 CPU |
-| Web UI | `next dev` | **Render Static Site** (free, CDN, no cold start) |
-| Postgres | `postgres:18` | **Neon Free** (0.5 GB). Render's free Postgres expires after 30 days. |
-| Cache / pub-sub | `valkey/valkey:9.1` | **Render Key Value (free)**, in-memory |
-| Search | `opensearchproject/opensearch:3.9.0` | **Aiven for OpenSearch Free** (4 GB RAM, 20 GB, k-NN enabled) |
-| Graph | `neo4j:2026.09.0-community` | **Neo4j AuraDB Free** (200k nodes, 400k relationships) |
-| Event bus | `redpandadata/redpanda:v26.2.5` | Redpanda **service container inside the GitHub Actions ingestion job** |
-| Ingestion workers | Compose or CLI | **GitHub Actions** cron + manual dispatch (Render workers aren't free) |
-| Object storage | local bucket/dir | **Cloudflare R2** (10 GB) |
-| Email / bot protection | Resend test mode / Turnstile test keys | Resend + Turnstile |
-| Observability | console logs | Grafana Cloud free + Langfuse Cloud free |
+| Edge / TLS | none (`next dev`, API on :8000) | **Caddy** with automatic HTTPS (your domain, or `<ip>.sslip.io`) |
+| Core API | `make api` or the `app` profile | `api` container (2 Uvicorn workers), internal only |
+| Web UI | `next dev` | Static export baked into the Caddy image, **same origin** as the API |
+| Postgres / Valkey / OpenSearch / Neo4j / Redpanda | same images, ports published for development | same images, **no published ports**, memory-capped |
+| Ingestion | `make ingest-smoke` (`run all`) | `chunk-worker`, `index-worker`, `relay` run continuously; nightly `schedule` + `gc` via systemd timers |
+| Migrations | `make migrate` | `migrate` one-shot, run by `deploy.sh` before each rollout |
+| Backups | none | nightly `pg_dump` (7-day retention). OpenSearch and Neo4j are rebuilt from Postgres (`reindex`) |
+| Deploys | | GitHub Actions `deploy.yml` → SSH → `deploy.sh` after CI passes on `main` |
+| Observability | console logs | JSON logs (`docker compose logs`); Grafana/Langfuse added in Phase 5 |
 
-### 9.2 Render free-tier constraints and mitigations
+### 9.3 Capacity (measured)
+
+| Resource | Use | Limit |
+|---|---|---|
+| RAM, all containers, idle with data loaded | **~2.8 GB** measured locally on arm64 (OpenSearch ~1.5 GB, Neo4j ~0.5 GB, Redpanda ~0.3 GB, Python services ~0.5 GB) | 12 GB (container caps sum to ~10.5 GB, plus 4 GB swap) |
+| Postgres | ~15–18k unique chunks ≈ 40 MB + app data | block volume (200 GB total) |
+| OpenSearch | ~18k × 1536-d vectors ≈ 110 MB + text | same |
+| Neo4j (Phase 3) | ≈ 70k nodes / 130k relationships | no quota when self-hosted |
+| Embedding cost, full backfill | ~18k chunks × ~250 tokens ≈ 4.5M tokens ≈ **$0.09** with `text-embedding-3-small` | |
+
+### 9.4 Oracle-specific constraints
 
 | Constraint | Mitigation |
 |---|---|
-| The web service **sleeps after 15 min idle and takes about 1 min to wake** | The widget shows a "waking up the demo…" state and calls `/healthz` on page load. Optionally an external uptime ping keeps it warm. One service running all month (~744 h) stays within the 750 free instance-hours. |
-| 512 MB RAM, 0.1 CPU | No ML models in the API image (no spaCy, no local rerankers). Heavy work runs in the ingestion jobs. Two Uvicorn workers maximum. |
-| Free instances can't be background workers or cron jobs | Ingestion runs in GitHub Actions. |
-| Free Key Value is not persistent | Postgres is the source of truth; Redis only holds caches and ephemeral state. |
-| Outbound bandwidth on the newer Hobby workspace (sources report as low as 5 GB/month) | SSE text payloads are small; static assets are served from the CDN; to be monitored. |
-
-### 9.3 Free-tier capacity check
-
-| Store | Estimated need (3 versions, deduplicated) | Free limit |
-|---|---|---|
-| Neon Postgres | **Measured (Phase 1 sample):** ~5.6 chunks/page, avg 200 tokens, 47%+ cross-version dedupe → ~34k occurrences, ~15–18k unique chunks ≈ 40 MB + app data | 0.5 GB |
-| AuraDB nodes | ~18k chunks + ~25k sections + ~6k docs + ~20k entities ≈ 70k (revised down from 150k) | 200k |
-| AuraDB relationships | IS_PART_OF ~43k + MENTIONS (≤ 8/chunk, avg ~2.5) ~45k + others ~40k ≈ 130k (revised down from 380k) | 400k (comfortable) |
-| Aiven OpenSearch | ~90k × 1536-d float vectors ≈ 0.55 GB + text ≈ 1 GB | 20 GB / 4 GB RAM |
-
-If AuraDB fills up: lower the MENTIONS cap, drop the oldest version, or skip Chunk nodes for boilerplate pages.
+| Always Free A1 is **2 OCPU / 12 GB** (halved from 4/24 in June 2026, without announcement) | Memory caps per service; measured use is about 2.8 GB. The whole stack is reproducible from the repo, so moving to another VM takes about an hour. |
+| Oracle **reclaims idle** Always Free instances (CPU, network **and** memory all < 20% over 7 days) | Memory sits well above 20% (OpenSearch/Neo4j resident), so the VM is not "idle" |
+| Oracle's Ubuntu image ships **iptables rules that reject all but SSH** | `bootstrap.sh` opens 80/443 and persists the rules; the VCN security list must also allow them (DEPLOY.md) |
+| A1 capacity can be "out of host capacity" in busy regions | Retry, or pick another availability domain/region at creation |
+| OpenSearch needs `vm.max_map_count ≥ 262144` | Set by `bootstrap.sh` |
+| Single VM = single point of failure | Acceptable for a portfolio demo. Postgres is backed up nightly; everything else is rebuildable. |
 
 ## 10. Non-functional targets, monitoring and alerting
 
-**Latency budgets (resolve G1).** Measured with the service warm; free-tier cold starts are excluded and reported separately.
+**Latency budgets (resolve G1).** Measured at the API; the single always-on VM has no cold starts.
 
 | Metric | Target (P90) |
 |---|---|
@@ -565,11 +578,11 @@ If AuraDB fills up: lower the MENTIONS cap, drop the oldest version, or skip Chu
 | LLM | Hallucination | Confident wrong advice | Retrieval gate, mandatory valid citations, guardrail prompt, judge sampling, review queue |
 | LLM | Latency spike / outage | User abandons the chat | Streaming, breaker → fallback tier → graceful escalation |
 | LLM | Runaway cost / abuse | Budget exhausted | Email verification, Turnstile, per-user quota, global spend cap |
-| OpenSearch (Aiven) | Paused or unavailable | No retrieval | Readiness check; FAQ cache still answers; otherwise escalate with a message |
-| Neo4j (AuraDB) | Unavailable or slow | No graph expansion | Graph step is time-boxed and optional; continue with hybrid-search results |
+| OpenSearch | Unavailable / index lost | No retrieval | Readiness check; FAQ cache still answers; otherwise escalate. Index rebuilt from Postgres with `reindex` |
+| Neo4j | Unavailable or slow | No graph expansion | Graph step is time-boxed and optional; continue with hybrid-search results |
 | Key Value | Restart (in-memory) | Lost caches and sessions | Rebuild sessions from Postgres; caches warm up again |
-| Postgres (Neon) | Cold start / unavailable | Cannot persist | Connection retry; return 503 with a friendly UI state |
-| Render API | Cold start (~1 min) | Slow first visit | "Waking up" UI state, optional keep-warm ping |
+| Postgres | Unavailable / disk loss | Cannot persist | Connection retry; 503 with a friendly UI state; restore from the nightly backup |
+| Oracle VM | Reclaimed, rebooted or region outage | Demo offline | `restart: unless-stopped`; rebuild with `bootstrap.sh` + `deploy.sh` + latest backup (about 1 hour) |
 | Ingestion | Job failure / bad parse | Stale or corrupt KB | Idempotent consumers, DLQ topics, alerts, `kb_version` rollback |
 | MongoDB docs site | Layout change | Parser breaks | Parser contract tests on saved HTML fixtures; failed pages go to the DLQ, not partial writes |
 
@@ -579,13 +592,13 @@ Every phase ends with something demo-able for the portfolio.
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| **0. Foundation** | Monorepo, Compose stack, FastAPI skeleton, Next.js skeleton, CI, ADRs, Render Blueprint | `make up` gives a healthy stack; `make test` passes; CI green |
-| **1. Ingestion v1** | Multi-version sitemap crawl → chunk → dedupe → embed → OpenSearch + Postgres; outbox; GitHub Actions ingestion job; golden set v0 | All configured versions indexed; re-run is a no-op; nightly diff works |
+| **0. Foundation** | Monorepo, Compose stack, FastAPI skeleton, Next.js skeleton, CI, ADRs | `make up` gives a healthy stack; `make test` passes; CI green |
+| **1. Ingestion v1** | Multi-version sitemap crawl → chunk → dedupe → embed → OpenSearch + Postgres; outbox; Oracle deployment (Caddy, workers, timers, CD); golden set v0 | All configured versions indexed; re-run is a no-op; nightly diff works |
 | **2. Query v1 (hybrid RAG)** | Chat API, SSE, widget, citations, guardrails, version filter, cost metering | Golden-set baseline recorded; warm first token under 3 s (P90) |
 | **3. GraphRAG** | EEEP rules + LLM extraction, Neo4j, graph expansion | Measurable lift over Phase 2 on the error-code and complex categories |
 | **4. Auth, tickets, escalation** | Email-code login, quotas, state machine, calibrated confidence, summaries, agent console, live takeover | Escalation recall ≥ 0.95; end-to-end handoff demo |
 | **5. Hardening** | PII middleware, caches and coalescing, breaker and fallback, rate limits, observability, judge sampling, KB feedback loop | Simulated LLM outage handled; dashboards and alerts live |
-| **6. Deploy and showcase** | Render + free datastores live, k6 load test, security review, portfolio write-up with eval results | Public demo URL; targets met when warm |
+| **6. Showcase** | k6 load test on the VM, security review, portfolio write-up with eval results | Public demo URL; latency targets met |
 
 ## 14. Risks and open items
 
@@ -593,8 +606,6 @@ Every phase ends with something demo-able for the portfolio.
 |---|---|
 | MongoDB docs licence terms | Verify CC BY-NC-SA and attribution wording before going public |
 | MongoDB docs URL / sitemap scheme per version | **Resolved**: see ADR 0015 |
-| AuraDB relationship quota | Measured chunk counts put it at about ⅓ of the quota; still monitor during the Phase 3 backfill |
-| Render Hobby bandwidth and cold starts | Monitor; keep-warm ping if needed |
-| Aiven free OpenSearch may pause when inactive | Readiness check + resume procedure in the runbook |
-| Free-tier terms change without notice | Everything is reproducible from `render.yaml` + Compose; datastores can be swapped via environment variables |
+| Oracle Always Free terms change again | Stack is reproducible from the repo (`bootstrap.sh`, `deploy.sh`); any 4 GB+ arm64/amd64 VM works, e.g. a ~€4/month VPS |
+| Single VM is a single point of failure | Accepted for a demo; nightly Postgres backups; everything else rebuildable |
 | OpenAI model IDs and prices change | Model IDs are config only; per-task evals rerun on change |

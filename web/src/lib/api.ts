@@ -1,12 +1,14 @@
+/**
+ * Base URL of the backend API.
+ * - Production (Caddy, same origin): built with NEXT_PUBLIC_API_BASE_URL="" → relative URLs.
+ * - Local dev: unset → the API on localhost:8000.
+ */
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-export type ApiStatus = "checking" | "ok" | "waking" | "down";
+export type ApiStatus = "checking" | "ok" | "slow" | "down";
 
-/**
- * Pings /healthz. On Render's free tier the API sleeps after 15 min idle and
- * takes ~1 min to wake, so a slow first response is reported as "waking".
- */
+/** Pings /healthz; a request that times out is reported as "slow" and retried by callers. */
 export async function checkHealth(timeoutMs = 5000): Promise<ApiStatus> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -17,7 +19,7 @@ export async function checkHealth(timeoutMs = 5000): Promise<ApiStatus> {
     return res.ok ? "ok" : "down";
   } catch (err) {
     return err instanceof DOMException && err.name === "AbortError"
-      ? "waking"
+      ? "slow"
       : "down";
   } finally {
     clearTimeout(timer);

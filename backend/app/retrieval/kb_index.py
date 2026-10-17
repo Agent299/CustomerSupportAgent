@@ -8,7 +8,7 @@ import contextlib
 from dataclasses import dataclass
 from typing import Any
 
-from opensearchpy import AsyncOpenSearch, NotFoundError
+from opensearchpy import AsyncOpenSearch, NotFoundError, RequestError
 from opensearchpy.helpers import async_bulk
 
 from app.config import Settings
@@ -80,9 +80,14 @@ class KbIndex:
     async def ensure(self) -> None:
         """Create index, alias and hybrid search pipeline if missing (idempotent)."""
         if not await self._client.indices.exists(index=self.physical_name):
-            await self._client.indices.create(
-                index=self.physical_name, body=index_body(self.dimensions)
-            )
+            try:
+                await self._client.indices.create(
+                    index=self.physical_name, body=index_body(self.dimensions)
+                )
+            except RequestError as exc:
+                # Several workers start at once and race to create the index.
+                if exc.error != "resource_already_exists_exception":
+                    raise
         if not await self._client.indices.exists_alias(name=self.alias):
             await self._client.indices.put_alias(index=self.physical_name, name=self.alias)
         await self._client.search_pipeline.put(

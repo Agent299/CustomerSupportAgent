@@ -1,6 +1,6 @@
 # ADR 0014: Render for compute; free managed services for state
 
-- Status: Accepted
+- Status: **Superseded** by [ADR 0016](0016-oracle-cloud-single-vm.md) (2026-10-17)
 - Date: 2026-10-17
 
 ## Context

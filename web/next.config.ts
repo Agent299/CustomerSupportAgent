@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Deployed as a Render Static Site (docs/PLAN.md §9); all data is fetched client-side.
+  // Static export served by Caddy on the Oracle VM (deploy/oracle); data is fetched client-side.
   output: "export",
   trailingSlash: true,
   turbopack: {

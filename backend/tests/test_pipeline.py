@@ -1,5 +1,6 @@
 """Ingestion end to end: mocked docs site → in-memory bus → real Postgres + OpenSearch."""
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -224,3 +225,13 @@ async def test_page_that_keeps_failing_is_dead_lettered(setup) -> None:  # type:
     dlq = pipeline.bus.topics[TOPIC_RAW_DOCUMENTS + DLQ_SUFFIX]  # type: ignore[attr-defined]
     assert [key for key, _ in dlq] == ["9.0:core/compound"]
     assert pipeline.stats["9.0:added"] == 1 and pipeline.stats["7.0:added"] == 1
+
+
+async def test_concurrent_index_creation_is_safe(kb: KbIndex) -> None:
+    # Workers start simultaneously in production and all call ensure() on a fresh index.
+    racers = [KbIndex(kb._client, kb.alias + "_race", TEST_DIMENSIONS) for _ in range(4)]
+    try:
+        await asyncio.gather(*(index.ensure() for index in racers))
+        assert await racers[0].count() == 0
+    finally:
+        await racers[0].drop()

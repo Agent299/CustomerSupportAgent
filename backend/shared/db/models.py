@@ -79,7 +79,8 @@ class ChunkOccurrence(Base):
 class IngestOutbox(Base):
     """Webhook requests waiting to be published to ``raw_documents`` by the next run.
 
-    The API stays up without Kafka (Render free tier); the ingestion job drains this table.
+    The API never talks to Kafka directly (transactional outbox); the relay worker
+    publishes pending rows.
     """
 
     __tablename__ = "ingest_outbox"

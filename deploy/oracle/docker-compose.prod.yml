@@ -1,0 +1,181 @@
+# Production stack for one Oracle Cloud Always Free Ampere A1 VM (arm64, 2 OCPU / 12 GB).
+# See docs/DEPLOY.md. Run from this directory:
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d --wait
+#
+# Only Caddy publishes ports (80/443). Everything else is on the internal network.
+# Memory caps sum to ~10.5 GB, leaving headroom for the OS and Docker.
+name: support-agent-prod
+
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-backend-env: &backend-env
+  APP_ENV: prod
+  DATABASE_URL: postgresql+asyncpg://support:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/support
+  REDIS_URL: redis://valkey:6379/0
+  KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+  OPENSEARCH_URL: http://opensearch:9200
+  NEO4J_URI: bolt://neo4j:7687
+
+x-worker: &worker
+  <<: *service
+  build: { context: ../../backend, target: worker }
+  image: support-agent/worker:local
+  env_file: [.env]
+  environment: *backend-env
+  volumes: [tiktoken:/srv/.cache/tiktoken]
+  mem_limit: 512m
+  depends_on:
+    postgres: { condition: service_healthy }
+    redpanda: { condition: service_healthy }
+    opensearch: { condition: service_healthy }
+
+services:
+  postgres:
+    <<: *service
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: support
+    volumes: [pgdata:/var/lib/postgresql]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d support"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    <<: *service
+    image: valkey/valkey:9.1.2-alpine
+    # Cache / ephemeral state only; Postgres is the source of truth (PLAN §8.4).
+    command: ["valkey-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redpanda:
+    <<: *service
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.5
+    # dev-container mode relaxes fsync: acceptable because topics are transient work
+    # queues; every event can be regenerated from Postgres by `schedule`.
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:9092
+    volumes: [redpanda:/var/lib/redpanda/data]
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  opensearch:
+    <<: *service
+    image: opensearchproject/opensearch:3.9.0
+    environment:
+      discovery.type: single-node
+      # Not reachable from outside the Docker network; rebuildable from Postgres.
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes: [opensearch:/usr/share/opensearch/data]
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  neo4j:
+    <<: *service
+    image: neo4j:2026.09.0-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_server_memory_heap_max__size: 768m
+      NEO4J_server_memory_pagecache_size: 512m
+    volumes: [neo4j:/data]
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+
+  # One-shot: `docker compose run --rm migrate` (deploy.sh runs it before `up`).
+  migrate:
+    <<: *worker
+    restart: "no"
+    profiles: [tools]
+    entrypoint: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *service
+    build: { context: ../../backend, target: api }
+    image: support-agent/api:local
+    env_file: [.env]
+    environment: *backend-env
+    mem_limit: 768m
+    depends_on:
+      postgres: { condition: service_healthy }
+      opensearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+
+  chunk-worker:
+    <<: *worker
+    command: ["chunk-worker", "--follow"]
+
+  index-worker:
+    <<: *worker
+    command: ["index-worker", "--follow"]
+
+  relay:
+    <<: *worker
+    command: ["relay", "--interval", "60"]
+    mem_limit: 384m
+
+  caddy:
+    <<: *service
+    build: ../../web
+    image: support-agent/web:local
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 256m
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redpanda:
+  opensearch:
+  neo4j:
+  tiktoken:
+  caddy_data:
+  caddy_config:

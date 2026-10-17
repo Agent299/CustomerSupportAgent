@@ -1,0 +1,11 @@
+[Unit]
+Description=Support agent: remove orphan chunks after the nightly run
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/support-agent/deploy/oracle
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml run --rm --no-deps chunk-worker gc
+TimeoutStartSec=2h

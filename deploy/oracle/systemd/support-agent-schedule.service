@@ -1,0 +1,11 @@
+[Unit]
+Description=Support agent: emit raw_documents for all docs pages + outbox
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/support-agent/deploy/oracle
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml run --rm --no-deps chunk-worker schedule
+TimeoutStartSec=2h

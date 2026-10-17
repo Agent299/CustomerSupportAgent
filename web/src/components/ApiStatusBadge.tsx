@@ -7,7 +7,7 @@ import { type ApiStatus, checkHealth } from "@/lib/api";
 const LABELS: Record<ApiStatus, string> = {
   checking: "Checking API…",
   ok: "API online",
-  waking: "Waking up the demo (up to a minute)…",
+  slow: "API is slow to respond, retrying…",
   down: "API unreachable",
 };
 
@@ -20,7 +20,7 @@ export function ApiStatusBadge() {
       const next = await checkHealth();
       if (cancelled) return;
       setStatus(next);
-      if (next === "waking") setTimeout(poll, 5000);
+      if (next === "slow") setTimeout(poll, 5000);
     };
     void poll();
     return () => {

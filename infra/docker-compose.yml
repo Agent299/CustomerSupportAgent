@@ -1,4 +1,4 @@
-# Local development stack. Production uses managed free tiers (docs/PLAN.md §9).
+# Local development stack. Production: deploy/oracle/docker-compose.prod.yml (docs/DEPLOY.md).
 #   make up        → datastores only (run the API on the host with `make api`)
 #   make up-app    → datastores + containerized API
 name: support-agent
@@ -49,7 +49,7 @@ services:
     image: opensearchproject/opensearch:3.9.0
     environment:
       discovery.type: single-node
-      DISABLE_SECURITY_PLUGIN: "true"       # local only; prod (Aiven) uses TLS + auth
+      DISABLE_SECURITY_PLUGIN: "true"       # never published outside the Docker network
       DISABLE_INSTALL_DEMO_CONFIG: "true"
       OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
     ulimits:

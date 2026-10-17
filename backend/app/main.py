@@ -33,7 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
-        """Liveness: the process is up. Render's health check and the widget's wake-up ping."""
+        """Liveness: the process is up (container healthcheck, UI status badge)."""
         return {"status": "ok"}
 
     @app.get("/readyz", tags=["health"])

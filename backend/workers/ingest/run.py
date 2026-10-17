@@ -5,9 +5,12 @@
     uv run python -m workers.ingest.run chunk-worker --follow # consume raw_documents
     uv run python -m workers.ingest.run index-worker --follow # consume chunked_documents
     uv run python -m workers.ingest.run reindex               # embed anything not yet indexed
+    uv run python -m workers.ingest.run relay --interval 60   # publish webhook outbox rows
+    uv run python -m workers.ingest.run gc                    # drop orphan chunks (PG + index)
 
-``all`` is what the scheduled GitHub Actions job runs: it drains each stage in turn through
-Redpanda, garbage-collects orphan chunks and records an ``ingest_runs`` row.
+``all`` drains each stage in turn and exits (local runs, one-off backfills). In production
+(deploy/oracle) the workers and relay run continuously, and a nightly timer runs ``schedule``
+then ``gc``.
 """
 
 import argparse
@@ -30,7 +33,7 @@ from shared.sources import DEFAULT_VERSIONS, DocVersion, get_version
 from workers.ingest.crawler import DocsCrawler
 from workers.ingest.pipeline import CHUNK_GROUP, INDEX_GROUP, Pipeline
 
-COMMANDS = ("all", "schedule", "chunk-worker", "index-worker", "reindex")
+COMMANDS = ("all", "schedule", "chunk-worker", "index-worker", "reindex", "relay", "gc")
 
 
 @asynccontextmanager
@@ -121,6 +124,12 @@ async def main_async(args: argparse.Namespace) -> dict[str, int]:
             )
         elif args.command == "reindex":
             await pipeline.index_pending()
+        elif args.command == "relay":
+            while True:
+                await pipeline.drain_outbox()
+                await asyncio.sleep(args.interval)
+        elif args.command == "gc":
+            await pipeline.collect_garbage()
         return dict(pipeline.stats)
 
 
@@ -133,6 +142,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="max pages per version (smoke runs)")
     parser.add_argument("--rate", type=float, default=2.0, help="max docs requests per second")
     parser.add_argument("--follow", action="store_true", help="workers: run until stopped")
+    parser.add_argument("--interval", type=float, default=60.0, help="relay: seconds between polls")
     parser.add_argument(
         "--idle-timeout", type=float, default=15.0, help="seconds of no messages before exiting"
     )

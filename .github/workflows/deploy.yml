@@ -1,0 +1,55 @@
+name: Deploy (Oracle Cloud)
+
+# Runs after CI succeeds on main (i.e. after a PR merge), or manually.
+# Skips with a notice until the OCI_* secrets are configured (docs/DEPLOY.md §4).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Oracle VM
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Check deployment is configured
+        id: config
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+        run: |
+          if [ -z "$OCI_HOST" ]; then
+            echo "::notice::OCI_HOST secret not set; skipping deploy (see docs/DEPLOY.md)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy over SSH
+        if: steps.config.outputs.skip != 'true'
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_SSH_USER: ${{ secrets.OCI_SSH_USER }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected sha: $SHA" >&2; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$OCI_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$OCI_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # Check out the exact commit first, so the new deploy.sh is the one that runs.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$OCI_SSH_USER@$OCI_HOST" \
+            "set -e; cd /opt/support-agent && git fetch --quiet origin && git checkout --quiet --detach $SHA && deploy/oracle/deploy.sh"
