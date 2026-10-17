@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Deployed as a Render Static Site (docs/PLAN.md §9); all data is fetched client-side.
+  // Static export: the UI is plain files fetching data client-side, so any static host works later.
   output: "export",
   trailingSlash: true,
   turbopack: {

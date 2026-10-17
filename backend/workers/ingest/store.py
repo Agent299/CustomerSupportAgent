@@ -1,29 +1,62 @@
-"""Idempotent persistence of parsed pages into Postgres (documents, chunks, occurrences)."""
+"""Postgres persistence for ingestion: documents, chunks, occurrences, outbox."""
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.db.models import Chunk, ChunkOccurrence, Document
+from shared.db.models import Chunk, ChunkOccurrence, Document, IngestOutbox
 from shared.sources import DocVersion, document_id, markdown_url, page_url
 from workers.ingest.chunker import ParsedPage
 
 
 @dataclass(frozen=True)
 class PageWrite:
-    new_chunk_ids: list[str]  # chunks that did not exist before → need embedding/indexing
+    chunk_ids: list[str]  # the page's current chunks (unique, in page order)
+    removed_chunk_ids: list[str]  # chunks the page referenced before but no longer does
+    new_chunk_ids: list[str]  # chunks that did not exist anywhere before
 
 
-async def content_hashes(session: AsyncSession, version: DocVersion) -> dict[str, str]:
-    """doc_key → content_hash for this version's active pages."""
-    rows = await session.execute(
-        select(Document.doc_key, Document.content_hash).where(
+@dataclass(frozen=True)
+class ChunkForIndex:
+    id: str
+    breadcrumb: str
+    text: str
+    token_count: int
+    indexed_at: datetime | None
+    embedding_model: str | None
+    versions: list[str]  # versions of *active* documents containing the chunk
+    doc_keys: list[str]
+    titles: list[str]
+
+
+async def content_hash(session: AsyncSession, version: DocVersion, key: str) -> str | None:
+    """Hash of the active document, or None if unknown/deleted."""
+    return await session.scalar(
+        select(Document.content_hash).where(
+            Document.id == document_id(key, version), Document.status == "active"
+        )
+    )
+
+
+async def active_keys(session: AsyncSession, version: DocVersion) -> set[str]:
+    rows = await session.scalars(
+        select(Document.doc_key).where(
             Document.version == version.label, Document.status == "active"
         )
     )
-    return {key: content_hash for key, content_hash in rows}
+    return set(rows)
+
+
+async def _occurrence_chunk_ids(session: AsyncSession, doc_id: str) -> list[str]:
+    rows = await session.scalars(
+        select(ChunkOccurrence.chunk_id)
+        .where(ChunkOccurrence.document_id == doc_id)
+        .order_by(ChunkOccurrence.ordinal)
+    )
+    return list(dict.fromkeys(rows))
 
 
 async def upsert_page(
@@ -36,6 +69,7 @@ async def upsert_page(
 ) -> PageWrite:
     """Replace one page's chunk list. Shared chunks are inserted once (ON CONFLICT DO NOTHING)."""
     doc_id = document_id(key, version)
+    previous = await _occurrence_chunk_ids(session, doc_id)
     values = {
         "id": doc_id,
         "doc_key": key,
@@ -58,6 +92,7 @@ async def upsert_page(
     )
     await session.execute(delete(ChunkOccurrence).where(ChunkOccurrence.document_id == doc_id))
 
+    current = list(dict.fromkeys(chunk.id for chunk in parsed.chunks))
     new_chunk_ids: list[str] = []
     if parsed.chunks:
         unique = {chunk.id: chunk for chunk in parsed.chunks}
@@ -87,24 +122,107 @@ async def upsert_page(
                 ]
             )
         )
-    return PageWrite(new_chunk_ids=new_chunk_ids)
+    removed = [chunk_id for chunk_id in previous if chunk_id not in set(current)]
+    return PageWrite(chunk_ids=current, removed_chunk_ids=removed, new_chunk_ids=new_chunk_ids)
 
 
-async def mark_deleted(session: AsyncSession, version: DocVersion, keys: list[str]) -> int:
-    if not keys:
-        return 0
-    ids = [document_id(key, version) for key in keys]
-    await session.execute(delete(ChunkOccurrence).where(ChunkOccurrence.document_id.in_(ids)))
+async def mark_deleted(session: AsyncSession, version: DocVersion, key: str) -> list[str] | None:
+    """Mark a page deleted. Returns the chunk ids it referenced, or None if it wasn't active."""
+    doc_id = document_id(key, version)
     result = await session.execute(
         update(Document)
-        .where(Document.id.in_(ids), Document.status != "deleted")
+        .where(Document.id == doc_id, Document.status != "deleted")
         .values(status="deleted", updated_at=func.now())
     )
-    return result.rowcount or 0  # type: ignore[attr-defined]
+    if not result.rowcount:  # type: ignore[attr-defined]
+        return None
+    removed = await _occurrence_chunk_ids(session, doc_id)
+    await session.execute(delete(ChunkOccurrence).where(ChunkOccurrence.document_id == doc_id))
+    return removed
 
 
 async def delete_orphan_chunks(session: AsyncSession) -> list[str]:
     """Remove chunks no page references any more; returns their ids (to purge from indexes)."""
-    orphans = select(ChunkOccurrence.chunk_id).where(ChunkOccurrence.chunk_id == Chunk.id)
-    result = await session.execute(delete(Chunk).where(~orphans.exists()).returning(Chunk.id))
+    referenced = select(ChunkOccurrence.chunk_id).where(ChunkOccurrence.chunk_id == Chunk.id)
+    result = await session.execute(delete(Chunk).where(~referenced.exists()).returning(Chunk.id))
     return list(result.scalars())
+
+
+async def chunks_for_index(session: AsyncSession, chunk_ids: list[str]) -> list[ChunkForIndex]:
+    """Chunks that still exist, with the versions/pages of their active documents."""
+    if not chunk_ids:
+        return []
+    active = Document.status == "active"
+    query = (
+        select(
+            Chunk.id,
+            Chunk.breadcrumb,
+            Chunk.text,
+            Chunk.token_count,
+            Chunk.indexed_at,
+            Chunk.embedding_model,
+            func.array_agg(distinct(Document.version)).filter(active).label("versions"),
+            func.array_agg(distinct(Document.doc_key)).filter(active).label("doc_keys"),
+            func.array_agg(distinct(Document.title)).filter(active).label("titles"),
+        )
+        .outerjoin(ChunkOccurrence, ChunkOccurrence.chunk_id == Chunk.id)
+        .outerjoin(Document, Document.id == ChunkOccurrence.document_id)
+        .where(Chunk.id.in_(chunk_ids))
+        .group_by(Chunk.id)
+    )
+    rows = await session.execute(query)
+    return [
+        ChunkForIndex(
+            id=row.id,
+            breadcrumb=row.breadcrumb,
+            text=row.text,
+            token_count=row.token_count,
+            indexed_at=row.indexed_at,
+            embedding_model=row.embedding_model,
+            versions=sorted(row.versions or []),
+            doc_keys=sorted(row.doc_keys or []),
+            titles=sorted(row.titles or []),
+        )
+        for row in rows
+    ]
+
+
+async def chunks_needing_embedding(
+    session: AsyncSession, embedding_model: str, limit: int
+) -> list[str]:
+    rows = await session.scalars(
+        select(Chunk.id)
+        .where(or_(Chunk.indexed_at.is_(None), Chunk.embedding_model != embedding_model))
+        .order_by(Chunk.id)
+        .limit(limit)
+    )
+    return list(rows)
+
+
+async def mark_indexed(session: AsyncSession, chunk_ids: list[str], embedding_model: str) -> None:
+    if chunk_ids:
+        await session.execute(
+            update(Chunk)
+            .where(Chunk.id.in_(chunk_ids))
+            .values(indexed_at=func.now(), embedding_model=embedding_model)
+        )
+
+
+async def pending_outbox(session: AsyncSession, limit: int = 500) -> list[IngestOutbox]:
+    rows = await session.scalars(
+        select(IngestOutbox)
+        .where(IngestOutbox.published_at.is_(None))
+        .order_by(IngestOutbox.id)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    return list(rows)
+
+
+async def mark_published(session: AsyncSession, outbox_ids: list[int]) -> None:
+    if outbox_ids:
+        await session.execute(
+            update(IngestOutbox)
+            .where(IngestOutbox.id.in_(outbox_ids))
+            .values(published_at=func.now())
+        )

@@ -4,11 +4,14 @@ version = "0.1.0"
 description = "GraphRAG customer support agent for MongoDB docs (core API + ingestion workers)"
 requires-python = ">=3.13"
 dependencies = [
+    "aiokafka>=0.14",
     "alembic>=1.20",
     "asyncpg>=0.32",
     "defusedxml>=0.7.1",
     "fastapi>=0.143",
     "httpx>=0.28",
+    "openai>=3.33",
+    "opensearch-py[async]>=3.2",
     "pydantic-settings>=2.16",
     "sqlalchemy[asyncio]>=2.1.5",
     "structlog>=26.1",
@@ -35,7 +38,11 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-markers = ["integration: needs a running Postgres (make up); always runs in CI"]
+markers = ["integration: needs backing services (make up); always runs in CI"]
+filterwarnings = [
+    # opensearch-py passes an aiohttp option that is a no-op on Python >= 3.13
+    "ignore:enable_cleanup_closed ignored:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100
@@ -53,3 +60,7 @@ ignore = ["S101"]  # assert is fine in tests
 python_version = "3.13"
 strict = true
 packages = ["app", "workers", "shared"]
+
+[[tool.mypy.overrides]]
+module = ["aiokafka", "aiokafka.*"]  # ships no type hints
+ignore_missing_imports = true

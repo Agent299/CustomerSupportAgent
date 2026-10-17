@@ -15,7 +15,8 @@
 | [0011](0011-llm-usage-policy.md) | Deterministic first; cheapest capable model; frontier only for complex tasks |
 | [0012](0012-version-aware-dedup.md) | Version-aware, content-hash-deduplicated chunks |
 | [0013](0013-email-code-auth.md) | Passwordless email-code authentication, built in-house |
-| [0014](0014-render-and-free-datastores.md) | Render for compute; free managed services for state |
+| [0014](0014-render-and-free-datastores.md) | ~~Render for compute; free managed services for state~~ (superseded by 0016) |
 | [0015](0015-official-markdown-source.md) | Ingest MongoDB's official Markdown pages, not HTML |
+| [0016](0016-deployment-deferred.md) | Run locally only; defer cloud deployment |
 
 See [`../PLAN.md`](../PLAN.md) §4 for the summary table.

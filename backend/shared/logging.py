@@ -6,8 +6,9 @@ import structlog
 def configure_logging(level: str = "INFO", *, json: bool = True) -> None:
     """JSON logs in deployed envs, readable console logs locally."""
     logging.basicConfig(format="%(message)s", level=level.upper())
-    # One INFO line per HTTP request drowns the ingestion logs.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Per-request / consumer-group chatter drowns the ingestion logs.
+    for noisy in ("httpx", "aiokafka", "opensearch"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     renderer: structlog.typing.Processor = (
         structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer()
     )

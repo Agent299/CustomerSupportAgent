@@ -9,7 +9,7 @@ The design is based on Chapter 6 of *Systems Design for the LLM Era*. This is a 
 
 ## Stack
 
-FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Render
+FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Docker Compose (runs locally)
 
 ## Quick start
 
@@ -19,6 +19,7 @@ Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), Node 24 + pnpm.
 cp .env.example .env      # add OPENAI_API_KEY
 make install
 make up                   # Postgres, Valkey, Redpanda, OpenSearch, Neo4j (waits until healthy)
+make ingest-smoke         # docs → Redpanda → chunks (Postgres) → embeddings → OpenSearch, 20 pages/version
 make api                  # http://localhost:8000/docs
 make web                  # http://localhost:3000
 make check                # lint + types + tests + web build (same as CI)
@@ -30,6 +31,10 @@ make check                # lint + types + tests + web build (same as CI)
 | OpenSearch | http://localhost:9200 |
 | Neo4j Browser | http://localhost:7474 (neo4j / localdevpassword) |
 | Kafka API (Redpanda) | localhost:19092 |
+
+## Deployment
+
+The project currently runs **locally only** (Docker Compose). Cloud hosting will be decided later; see [ADR 0016](docs/adr/0016-deployment-deferred.md).
 
 ## Contributing workflow
 
@@ -45,9 +50,11 @@ gh pr create --fill                  # CI runs on the PR
 gh pr merge --squash --delete-branch # allowed only after CI passes
 ```
 
+No OpenAI key handy? `EMBEDDING_PROVIDER=hash make ingest-smoke` uses a deterministic offline embedder; switching back to OpenAI and running `make reindex` re-embeds everything.
+
 ## Status
 
-Phase 0 (foundation) is complete. See [`docs/PLAN.md` §13](docs/PLAN.md#13-delivery-phases) for the roadmap.
+Phase 0 (foundation) is complete. Phase 1 (ingestion) is in progress: docs → chunks → embeddings → hybrid search index. See [`docs/PLAN.md` §13](docs/PLAN.md#13-delivery-phases) for the roadmap.
 
 ---
 

@@ -1,7 +1,12 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
+from app.ingest_api.routes import router as ingest_router
+from shared.db.session import make_engine, make_session_factory
 from shared.logging import configure_logging
 
 
@@ -9,7 +14,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level, json=settings.app_env != "local")
 
-    app = FastAPI(title="Support Agent API", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        engine = make_engine(settings.database_url)  # connects lazily, on first use
+        app.state.sessions = make_session_factory(engine)
+        yield
+        await engine.dispose()
+
+    app = FastAPI(title="Support Agent API", version="0.1.0", lifespan=lifespan)
+    app.state.settings = settings
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -20,7 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
-        """Liveness: the process is up. Render's health check and the widget's wake-up ping."""
+        """Liveness: the process is up (container healthcheck, UI status badge)."""
         return {"status": "ok"}
 
     @app.get("/readyz", tags=["health"])
@@ -28,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Readiness. Dependency checks are added as each datastore is wired in (Phase 1+)."""
         return {"status": "ready", "env": settings.app_env}
 
+    app.include_router(ingest_router)
     return app
 
 

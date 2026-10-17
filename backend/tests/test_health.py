@@ -28,3 +28,13 @@ def test_cors_origins_parsed_from_comma_separated_env(monkeypatch) -> None:  # t
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.cors_origins == ["http://a.test", "https://b.test"]
+
+
+def test_blank_secrets_are_treated_as_unset(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("INGEST_WEBHOOK_TOKEN", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "   ")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.ingest_webhook_token is None
+    assert settings.openai_api_key is None
