@@ -1,4 +1,4 @@
-# Local development stack. Production: deploy/oracle/docker-compose.prod.yml (docs/DEPLOY.md).
+# Local stack (the project runs locally only for now; see docs/adr/0016-deployment-deferred.md).
 #   make up        → datastores only (run the API on the host with `make api`)
 #   make up-app    → datastores + containerized API
 name: support-agent

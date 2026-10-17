@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Static export served by Caddy on the Oracle VM (deploy/oracle); data is fetched client-side.
+  // Static export: the UI is plain files fetching data client-side, so any static host works later.
   output: "export",
   trailingSlash: true,
   turbopack: {

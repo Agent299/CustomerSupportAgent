@@ -8,9 +8,8 @@
     uv run python -m workers.ingest.run relay --interval 60   # publish webhook outbox rows
     uv run python -m workers.ingest.run gc                    # drop orphan chunks (PG + index)
 
-``all`` drains each stage in turn and exits (local runs, one-off backfills). In production
-(deploy/oracle) the workers and relay run continuously, and a nightly timer runs ``schedule``
-then ``gc``.
+``all`` drains each stage in turn and exits. Alternatively, run ``chunk-worker --follow``,
+``index-worker --follow`` and ``relay`` continuously and trigger ``schedule`` / ``gc`` as needed.
 """
 
 import argparse

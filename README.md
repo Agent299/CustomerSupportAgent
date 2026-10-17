@@ -9,7 +9,7 @@ The design is based on Chapter 6 of *Systems Design for the LLM Era*. This is a 
 
 ## Stack
 
-FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Caddy · Oracle Cloud (Always Free, arm64)
+FastAPI (Python 3.13, uv) · Next.js (static export) · OpenAI · OpenSearch · Neo4j · PostgreSQL · Valkey · Redpanda · Docker Compose (runs locally)
 
 ## Quick start
 
@@ -34,7 +34,7 @@ make check                # lint + types + tests + web build (same as CI)
 
 ## Deployment
 
-Production runs on one Oracle Cloud Always Free Ampere A1 VM: Docker Compose, with Caddy at the edge. A merge to `main` deploys automatically once CI passes. See [`docs/DEPLOY.md`](docs/DEPLOY.md).
+The project currently runs **locally only** (Docker Compose). Cloud hosting will be decided later; see [ADR 0016](docs/adr/0016-deployment-deferred.md).
 
 ## Contributing workflow
 

@@ -1,4 +1,4 @@
-# Backend images (multi-arch: built natively on the Oracle Ampere A1 / arm64 host).
+# Backend images.
 #   target "worker": ingestion workers (app + shared + workers)
 #   target "api" (default, last stage): the FastAPI service (app + shared only)
 FROM python:3.13-slim AS base

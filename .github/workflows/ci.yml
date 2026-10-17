@@ -97,43 +97,20 @@ jobs:
       - run: pnpm build
 
   docker:
-    name: Images build (arm64)
-    # Native arm64, same architecture as the Oracle Ampere A1 VM.
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    name: Images build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - run: docker build --target api -t support-agent/api backend
       - run: docker build --target worker -t support-agent/worker backend
-      - run: docker build -t support-agent/web web
-
-  deploy-config:
-    name: Deploy config (compose, Caddy, scripts)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: deploy/oracle
-    steps:
-      - uses: actions/checkout@v7
-      - name: Validate production compose file
-        run: |
-          cp .env.example .env
-          sed -i 's/^SITE_ADDRESS=$/SITE_ADDRESS=:80/; s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=x/; s/^NEO4J_PASSWORD=$/NEO4J_PASSWORD=x/' .env
-          docker compose -f docker-compose.prod.yml config --quiet
-      - name: Validate Caddyfile
-        run: |
-          docker run --rm -e SITE_ADDRESS=:80 -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2.11.7-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-      - name: ShellCheck
-        run: shellcheck bootstrap.sh deploy.sh backup.sh
 
   # Single, stable check name for the main-branch ruleset to require.
   # Add new jobs to `needs` and they automatically become merge requirements.
   ci-passed:
     name: CI passed
     if: always()
-    needs: [backend, web, docker, deploy-config]
+    needs: [backend, web, docker]
     runs-on: ubuntu-24.04
     steps:
       - name: Fail unless every required job succeeded

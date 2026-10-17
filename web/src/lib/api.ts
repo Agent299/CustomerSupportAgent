@@ -1,7 +1,6 @@
 /**
- * Base URL of the backend API.
- * - Production (Caddy, same origin): built with NEXT_PUBLIC_API_BASE_URL="" → relative URLs.
- * - Local dev: unset → the API on localhost:8000.
+ * Base URL of the backend API. Unset → the local API on localhost:8000.
+ * Set NEXT_PUBLIC_API_BASE_URL="" to use relative URLs behind a same-origin proxy.
  */
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
