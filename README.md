@@ -31,6 +31,20 @@ make check                # lint + types + tests + web build (same as CI)
 | Neo4j Browser | http://localhost:7474 (neo4j / localdevpassword) |
 | Kafka API (Redpanda) | localhost:19092 |
 
+## Contributing workflow
+
+`main` is protected: nobody can push to it directly. Every change goes through a branch and a pull request, and can only be merged once the **`CI passed`** check is green. That check covers backend lint, types and tests; the web lint and build; and the API Docker build.
+
+```bash
+git switch main && git pull
+git switch -c feat/<short-name>      # or fix/, ci/, docs/, chore/
+# ...work, then run the same checks CI runs:
+make check
+git push -u origin HEAD
+gh pr create --fill                  # CI runs on the PR
+gh pr merge --squash --delete-branch # allowed only after CI passes
+```
+
 ## Status
 
 Phase 0 (foundation) is complete. See [`docs/PLAN.md` §13](docs/PLAN.md#13-delivery-phases) for the roadmap.
