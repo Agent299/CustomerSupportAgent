@@ -537,7 +537,12 @@ The project runs **locally** on Docker Compose. Cloud hosting is deferred and wi
 
 ## 11. Evaluation strategy
 
-- **Golden dataset v0:** about 150 examples covering the chapter's four categories (simple FAQ, complex synthesis, error code / graph traversal, must-escalate), each tagged with a version. Stored as YAML in `backend/evals/` and loaded into Postgres.
+- **Golden dataset v0** (`backend/evals/golden/v0.yaml`): **52 examples** covering the chapter's four categories: 15 FAQ, 15 complex, 12 error code, 10 must-escalate.
+  - Includes multi-turn cases (e.g. the chapter's `My app isn't connecting` → `E11000` exchange) and version-specific cases for 8.0 and 7.0.
+  - Each answerable example lists its expected source pages and **key facts quoted from the docs**. `make eval-validate` re-checks them against the ingested pages, so the set cannot silently drift from the documentation.
+  - It grows toward about 150 examples from reviewed real conversations (Phase 4+).
+  - Kept as YAML in the repo, so it's reviewable in PRs.
+- **Retrieval baseline (Phase 1):** `make eval-retrieval` reports recall@1/3/5/10 and MRR@10 per category; summaries live in `docs/evals/`. Phases 2–3 must beat it on the same set.
 - **Offline gate (CI):**
   - Retrieval recall@k.
   - Faithfulness / groundedness (judge).

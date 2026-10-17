@@ -1,0 +1,584 @@
+name: golden-v0
+description: >
+  Phase 1 golden set (docs/PLAN.md §11). Four categories from the chapter's evaluation suite.
+  Every expected source and key fact was checked against MongoDB's official Markdown docs on
+  2026-10-17 and is re-checked by `python -m evals validate`. Key facts quote the docs'
+  wording; golden answers paraphrase them.
+
+examples:
+  # ───────────────────────── FAQ: simple, single-page answers ─────────────────────────
+  - id: faq-default-port
+    category: faq
+    query: What port does MongoDB listen on by default?
+    expected_route: ANSWERED
+    expected_sources: [reference/default-mongodb-port]
+    key_facts: ["27017"]
+    golden_answer: >
+      mongod and mongos listen on port 27017 by default. You can change it with the --port
+      option or net.port in the configuration file.
+
+  - id: faq-connection-string
+    category: faq
+    query: How do I connect to the database? What does the connection string look like?
+    expected_route: ANSWERED
+    expected_sources: [reference/connection-string]
+    key_facts: ["mongodb://", "mongodb+srv://"]
+    golden_answer: >
+      Use a connection string URI with your driver or mongosh. The standard format is
+      mongodb://[username:password@]host1[:port1][,...hostN[:portN]][/[defaultauthdb][?options]];
+      the SRV format mongodb+srv://... resolves hosts through DNS (used by Atlas).
+
+  - id: faq-create-index
+    category: faq
+    query: How do I create an index on a field?
+    expected_route: ANSWERED
+    expected_sources: [reference/method/db.collection.createindex]
+    key_facts: ["db.collection.createIndex("]
+    golden_answer: >
+      Call db.collection.createIndex() with a key pattern, e.g.
+      db.users.createIndex({ email: 1 }) for an ascending index on email. Options such as
+      unique, name or partialFilterExpression go in the second argument.
+
+  - id: faq-insert-one
+    category: faq
+    query: how do i insert a single document into a collection
+    expected_route: ANSWERED
+    expected_sources: [reference/method/db.collection.insertone]
+    key_facts: ["insertOne", "_id"]
+    golden_answer: >
+      Use db.collection.insertOne(document). If the document has no _id field, MongoDB adds
+      one (an ObjectId); the result returns the insertedId.
+
+  - id: faq-update-set
+    category: faq
+    query: How can I change just one field of a document without replacing the whole thing?
+    expected_route: ANSWERED
+    expected_sources: [reference/operator/update/set]
+    key_facts: ["$set", "replaces the value of a field"]
+    golden_answer: >
+      Use an update with the $set operator, e.g.
+      db.users.updateOne({ _id: id }, { $set: { status: "active" } }). $set replaces the value
+      of the given field (creating it if missing) and leaves other fields untouched.
+
+  - id: faq-delete-many
+    category: faq
+    query: How do I delete all documents that match a filter?
+    expected_route: ANSWERED
+    expected_sources: [reference/method/db.collection.deletemany]
+    key_facts: ["deleteMany", "Removes all documents that match the filter"]
+    golden_answer: >
+      db.collection.deleteMany(filter) removes all documents that match the filter, e.g.
+      db.orders.deleteMany({ status: "cancelled" }). An empty filter {} deletes every document.
+
+  - id: faq-create-user
+    category: faq
+    query: How do I create a database user with specific roles?
+    expected_route: ANSWERED
+    expected_sources: [reference/method/db.createuser]
+    key_facts: ["db.createUser(", "roles"]
+    golden_answer: >
+      Use db.createUser() in the database where the user should be defined, passing user,
+      pwd and a roles array, e.g. roles: [{ role: "readWrite", db: "app" }].
+
+  - id: faq-enable-auth
+    category: faq
+    query: How do I turn on authentication for my self-managed MongoDB?
+    expected_route: ANSWERED
+    expected_sources:
+      - tutorial/configure-scram-client-authentication
+      - tutorial/enable-authentication
+    key_facts: ["security.authorization", "createUser"]
+    golden_answer: >
+      Create an administrative user first (db.createUser in the admin database), then restart
+      mongod with access control enabled: security.authorization: enabled in the config file
+      (or --auth). Clients must then authenticate, e.g. with SCRAM.
+    notes: >
+      enable-authentication is a hub page; the procedure lives on the SCRAM tutorial it links
+      to (a REFERENCES edge for Phase 3).
+
+  - id: faq-ttl
+    category: faq
+    query: Can documents expire automatically after a certain time?
+    expected_route: ANSWERED
+    expected_sources: [core/index-ttl]
+    key_facts: ["expireAfterSeconds"]
+    golden_answer: >
+      Yes. Create a TTL index on a date field with the expireAfterSeconds option, e.g.
+      db.events.createIndex({ createdAt: 1 }, { expireAfterSeconds: 3600 }). A background
+      process removes documents after they expire.
+
+  - id: faq-explain
+    category: faq
+    query: How can I see which query plan MongoDB chose for my query?
+    expected_route: ANSWERED
+    expected_sources:
+      - reference/method/db.collection.explain
+      - reference/method/cursor.explain
+    key_facts: ["executionStats", "queryPlanner"]
+    golden_answer: >
+      Run the query with explain(), e.g. db.coll.find(filter).explain("executionStats").
+      queryPlanner mode shows the winning plan; executionStats adds documents/keys examined and
+      timing, so you can see whether an IXSCAN or COLLSCAN was used.
+
+  - id: faq-replica-set
+    category: faq
+    query: What is a replica set?
+    expected_route: ANSWERED
+    expected_sources: [replication]
+    key_facts: ["A replica set is a group of mongod instances that maintain the same data set"]
+    golden_answer: >
+      A replica set is a group of mongod instances that maintain the same data set. One member
+      is the primary that receives writes; secondaries replicate from it and one can be elected
+      primary if it fails, providing redundancy and high availability.
+
+  - id: faq-doc-size-limit
+    category: faq
+    query: What is the maximum size of a single document?
+    expected_route: ANSWERED
+    expected_sources: [reference/limits]
+    key_facts: ["16 mebibytes"]
+    golden_answer: >
+      The maximum BSON document size is 16 mebibytes. For larger data, use GridFS or
+      restructure the data (e.g. move unbounded arrays into separate documents).
+
+  - id: faq-backup-tools
+    category: faq
+    query: How do I back up and restore a database from the command line?
+    expected_route: ANSWERED
+    expected_sources: [tutorial/backup-and-restore-tools]
+    key_facts: ["mongodump", "mongorestore"]
+    golden_answer: >
+      Use the MongoDB Database Tools: mongodump creates a binary export of the data and
+      mongorestore restores it. They suit small deployments; larger ones should use filesystem
+      snapshots or a managed backup service.
+
+  - id: faq-change-streams
+    category: faq
+    query: How can my application react to new inserts in real time?
+    expected_route: ANSWERED
+    expected_sources: [changestreams]
+    key_facts: ["watch()", "replica set"]
+    golden_answer: >
+      Open a change stream with watch() on a collection, database or deployment; it delivers
+      insert/update/delete events as they happen. Change streams require a replica set or
+      sharded cluster.
+
+  - id: faq-bulkwrite-80
+    category: faq
+    version: "8.0"
+    query: Can I insert into several collections in one bulk request?
+    expected_route: ANSWERED
+    expected_sources: [reference/command/bulkwrite]
+    key_facts: ["New in version 8.0", "multiple collections"]
+    golden_answer: >
+      Yes, from MongoDB 8.0: the bulkWrite database command performs many insert, update and
+      delete operations on multiple collections in one request. The older
+      db.collection.bulkWrite() method works on a single collection.
+    notes: Version-specific; the command does not exist in the 7.0 docs.
+
+  # ───────────────────────── Complex: synthesis across concepts ─────────────────────────
+  - id: complex-find-sort-slow
+    category: complex
+    query: >
+      I'm trying to optimize read performance for a large collection, but my find() query with
+      a sort() is slow. I already have an index on the sort field.
+    expected_route: ANSWERED
+    expected_sources: [tutorial/equality-sort-range-guideline, core/query-optimization]
+    key_facts: ["Equality", "Sort", "Range"]
+    golden_answer: >
+      An index on only the sort field often can't serve both the filter and the sort. Build a
+      compound index following the ESR guideline: equality-match fields first, then the sort
+      fields, then range fields. Check with explain('executionStats') that the plan uses an
+      IXSCAN without an in-memory SORT stage.
+    notes: The chapter's "complex query" golden example.
+
+  - id: complex-covered-query
+    category: complex
+    query: How can a query be answered entirely from an index without reading documents?
+    expected_route: ANSWERED
+    expected_sources: [core/query-optimization]
+    key_facts: ["covered query"]
+    golden_answer: >
+      Make it a covered query: every field in the filter and in the projection must be in the
+      same index, and the projection must exclude _id unless _id is in the index. MongoDB then
+      returns results from the index keys alone.
+
+  - id: complex-transactions-standalone
+    category: complex
+    query: Can I use multi-document transactions on a single standalone mongod?
+    expected_route: ANSWERED
+    expected_sources: [core/transactions-production-consideration, core/transactions]
+    key_facts: ["standalone"]
+    golden_answer: >
+      No. Multi-document transactions need a replica set or sharded cluster. For development,
+      run a single-node replica set instead of a standalone mongod.
+
+  - id: complex-transaction-lifetime
+    category: complex
+    query: My transactions get aborted when they run for a while. Is there a time limit?
+    expected_route: ANSWERED
+    expected_sources: [core/transactions-production-consideration]
+    key_facts: ["less than one minute", "transactionLifetimeLimitSeconds"]
+    golden_answer: >
+      Yes. By default a transaction must have a runtime of less than one minute; longer ones are
+      aborted. The limit is the transactionLifetimeLimitSeconds server parameter, but it's
+      usually better to split the work into smaller transactions.
+
+  - id: complex-embed-vs-reference
+    category: complex
+    query: Should I embed related data in one document or reference it from another collection?
+    expected_route: ANSWERED
+    expected_sources: [data-modeling/embedding, data-modeling]
+    key_facts: ["embedded"]
+    golden_answer: >
+      Embed data that is read together and has a bounded size (one-to-one, one-to-few): one read
+      gets everything and single-document writes are atomic. Reference data that grows without
+      bound, is shared by many documents, or is accessed independently, and keep documents
+      under the 16 MiB limit.
+
+  - id: complex-shard-key
+    category: complex
+    query: What makes a good shard key?
+    expected_route: ANSWERED
+    expected_sources: [core/sharding-choose-a-shard-key]
+    key_facts: ["cardinality", "frequency", "monotonically"]
+    golden_answer: >
+      Choose a key with high cardinality, low frequency of repeated values, and values that do
+      not increase monotonically (to avoid hot spots on one shard), and that matches your common
+      query patterns so queries can be targeted.
+
+  - id: complex-ttl-delay
+    category: complex
+    query: I created a TTL index but expired documents are still there. Why aren't they deleted?
+    expected_route: ANSWERED
+    expected_sources: [core/index-ttl]
+    key_facts: ["does not guarantee that expired data is deleted immediately"]
+    golden_answer: >
+      TTL deletion is a background task, so it does not guarantee that expired data is deleted
+      immediately; there can be a delay after expiry. Also check that the indexed field holds
+      BSON dates (or arrays of dates) and that the TTL monitor is running (it stops on a
+      standalone mongod holding replica-set data).
+
+  - id: complex-unique-sharded
+    category: complex
+    query: Can I put a unique index on email in a sharded collection whose shard key is userId?
+    expected_route: ANSWERED
+    expected_sources: [core/index-unique, core/sharding-shard-key-indexes]
+    key_facts: ["shard key"]
+    golden_answer: >
+      Not as a plain unique index. On sharded collections only the shard key index, a compound
+      index with the shard key as a prefix, or _id (enforced per shard) can be unique. Make
+      the shard key part of the unique index, or enforce email uniqueness another way.
+
+  - id: complex-write-concern-majority
+    category: complex
+    query: What does write concern w majority actually guarantee?
+    expected_route: ANSWERED
+    expected_sources: [reference/write-concern]
+    key_facts: ["majority"]
+    golden_answer: >
+      With w: "majority" the write is acknowledged only after a majority of the data-bearing
+      voting members have applied it, so it survives a primary failover and won't be rolled
+      back.
+
+  - id: complex-read-preference
+    category: complex
+    query: We read from secondaries to scale reads and sometimes get outdated data. Why?
+    expected_route: ANSWERED
+    expected_sources: [core/read-preference]
+    key_facts: ["asynchronous process", "stale data"]
+    golden_answer: >
+      Every read preference except primary may return stale data, because secondaries
+      replicate from the primary in an asynchronous process. Use primary (or primaryPreferred)
+      for reads that must be current, or bound staleness with maxStalenessSeconds.
+
+  - id: complex-retryable-writes
+    category: complex
+    query: Do I need my own retry logic for writes that fail due to network blips?
+    expected_route: ANSWERED
+    expected_sources: [core/retryable-writes]
+    key_facts: ["retryWrites", "once"]
+    golden_answer: >
+      Usually not. With retryable writes (retryWrites=true, the default in current drivers)
+      the driver retries supported writes once after network errors or when no healthy primary
+      is found. This requires a replica set or sharded cluster.
+
+  - id: complex-lookup
+    category: complex
+    query: My $lookup between two big collections is very slow. How do I speed it up?
+    expected_route: ANSWERED
+    expected_sources: [reference/operator/aggregation/lookup]
+    key_facts: ["foreignField", "index"]
+    golden_answer: >
+      Create an index on the foreignField in the foreign collection. Without it, an equality
+      $lookup likely performs poorly. Also filter early with $match so fewer documents reach
+      the join.
+
+  - id: complex-agg-memory
+    category: complex
+    query: My aggregation with $group fails because it uses too much memory. What can I do?
+    expected_route: ANSWERED
+    expected_sources: [core/aggregation-pipeline-limits]
+    key_facts: ["100 megabytes", "allowDiskUse"]
+    golden_answer: >
+      Stages needing more than 100 megabytes of memory must be allowed to write temporary files
+      to disk: pass allowDiskUse: true (or rely on allowDiskUseByDefault). Reducing the data
+      early with $match/$project also helps.
+
+  - id: complex-median-70
+    category: complex
+    version: "7.0"
+    history:
+      - role: user
+        content: We're running MongoDB 7.0 on-prem.
+      - role: assistant
+        content: Thanks, noted that you're on 7.0. What do you need help with?
+    query: How do I compute the median of a numeric field in an aggregation?
+    expected_route: ANSWERED
+    expected_sources: [reference/operator/aggregation/median]
+    key_facts: ["$median", "New in version 7.0"]
+    golden_answer: >
+      Use the $median accumulator (new in 7.0), e.g. in $group:
+      { medianPrice: { $median: { input: "$price", method: "approximate" } } }.
+    notes: Multi-turn; the version comes from the history.
+
+  - id: complex-schema-validation
+    category: complex
+    query: How can I reject inserts that are missing required fields?
+    expected_route: ANSWERED
+    expected_sources: [core/schema-validation/specify-json-schema]
+    key_facts: ["$jsonSchema", "required"]
+    golden_answer: >
+      Add schema validation with a $jsonSchema validator listing the fields under required
+      (via createCollection or collMod). With the default validationAction "error", invalid
+      inserts and updates are rejected.
+
+  # ───────────────────────── Error codes: map an error to cause + fix ─────────────────────────
+  - id: error-e11000
+    category: error_code
+    query: My app is crashing, I see an 'E11000' error in the logs.
+    expected_route: ANSWERED
+    expected_sources: [core/index-unique]
+    key_facts: ["duplicate key error"]
+    golden_answer: >
+      E11000 is a duplicate key error: an insert or update violates a unique index. This could
+      be the _id field or another unique field such as email. Check the document you're writing
+      and make sure its unique fields have new values.
+    notes: >
+      The chapter's GraphRAG example. The docs never contain the literal string "E11000"
+      (they say "duplicate key error" / DuplicateKey), so lexical search cannot match it.
+      Phase 3 target: an ErrorCode alias edge.
+
+  - id: error-e11000-multiturn
+    category: error_code
+    history:
+      - role: user
+        content: My app isn't connecting.
+      - role: assistant
+        content: What error code do you see?
+    query: E11000
+    expected_route: ANSWERED
+    expected_sources: [core/index-unique]
+    key_facts: ["duplicate key error"]
+    golden_answer: >
+      E11000 isn't a connection problem: it's a duplicate key error. A write violated a unique
+      index (often _id or a field like email). Fix the duplicate value or the unique index
+      definition.
+    notes: The chapter's multi-turn example; the bare code is meaningless without context.
+
+  - id: error-not-primary
+    category: error_code
+    query: Writes fail with NotWritablePrimary. What does that mean?
+    expected_route: ANSWERED
+    expected_sources: [reference/error-codes]
+    key_facts: ["NotWritablePrimary"]
+    golden_answer: >
+      The write reached a node that isn't the primary (e.g. a secondary, or during an
+      election). Connect with a replica set connection string so the driver routes writes to
+      the current primary, and use retryable writes to ride out failovers.
+
+  - id: error-write-conflict
+    category: error_code
+    query: My transaction aborted with a write conflict error. Why?
+    expected_route: ANSWERED
+    expected_sources: [core/transactions-production-consideration]
+    key_facts: ["write conflict"]
+    golden_answer: >
+      Another operation modified the same document concurrently, or the transaction's
+      modifications didn't fit in the WiredTiger cache, so it was aborted. Retry the whole
+      transaction (the driver's withTransaction / callback API does this for transient
+      errors) and keep transactions small.
+
+  - id: error-sort-memory
+    category: error_code
+    query: "My query fails with: Sort exceeded memory limit"
+    expected_route: ANSWERED
+    expected_sources: [reference/method/cursor.sort, reference/method/cursor.allowdiskuse]
+    key_facts: ["100 megabytes", "allowDiskUse"]
+    golden_answer: >
+      A blocking sort needed more than 100 megabytes of memory and disk use was disabled. Add
+      an index that supports the sort so no in-memory sort is needed, or allow temporary files
+      with allowDiskUse(true).
+
+  - id: error-doc-too-large
+    category: error_code
+    query: Insert fails with BSONObjectTooLarge.
+    expected_route: ANSWERED
+    expected_sources: [reference/limits]
+    key_facts: ["16 mebibytes", "GridFS"]
+    golden_answer: >
+      The document exceeds the maximum BSON document size of 16 mebibytes. Split it (e.g. move
+      growing arrays into their own collection) or store large binary content with GridFS.
+
+  - id: error-validation-failed
+    category: error_code
+    query: I get "Document failed validation" on insert.
+    expected_route: ANSWERED
+    expected_sources: [core/schema-validation/handle-invalid-documents]
+    key_facts: ["validationAction", "error"]
+    golden_answer: >
+      The collection has schema validation, and with validationAction "error" (the default)
+      MongoDB rejects writes that violate it. Fix the document to match the validator, or (if
+      appropriate) set validationAction to "warn" to log instead of reject.
+
+  - id: error-cursor-not-found
+    category: error_code
+    query: My long-running export fails with CursorNotFound halfway through.
+    expected_route: ANSWERED
+    expected_sources: [reference/method/cursor.nocursortimeout]
+    key_facts: ["period of inactivity", "30 minutes"]
+    golden_answer: >
+      The server closed the cursor after a period of inactivity, or its session expired after
+      being idle for longer than 30 minutes. Process batches faster or use smaller batches, and
+      for long jobs use an explicit session and refresh it periodically.
+
+  - id: error-auth-failed
+    category: error_code
+    query: I keep getting Authentication failed even though the password is correct.
+    expected_route: ANSWERED
+    expected_sources: [reference/connection-string]
+    key_facts: ["authSource"]
+    golden_answer: >
+      Often the user is defined in a different database than the one being authenticated
+      against. Set authSource in the connection string to the database where the user was
+      created (commonly admin), and URL-encode special characters in the password.
+
+  - id: error-max-time
+    category: error_code
+    query: "Queries fail with: operation exceeded time limit"
+    expected_route: ANSWERED
+    expected_sources: [reference/method/cursor.maxtimems]
+    key_facts: ["maxTimeMS"]
+    golden_answer: >
+      A time limit set with maxTimeMS was hit and the server stopped the operation. Make the
+      query cheaper (indexes, narrower filters) or raise the maxTimeMS value if the limit is
+      too strict.
+
+  - id: error-txn-lifetime-80
+    category: error_code
+    version: "8.0"
+    query: On 8.0 my transaction fails with TransactionExceededLifetimeLimitSeconds.
+    expected_route: ANSWERED
+    expected_sources: [core/transactions-production-consideration]
+    key_facts: ["less than one minute", "transactionLifetimeLimitSeconds"]
+    golden_answer: >
+      The transaction ran past the lifetime limit: by default a transaction must have a runtime
+      of less than one minute (transactionLifetimeLimitSeconds). Break the work into smaller
+      transactions, or raise the parameter if you really need longer ones.
+
+  # ───────────────────────── Escalation: hand off to a human ─────────────────────────
+  - id: escalate-double-charge
+    category: escalation
+    query: I think my billing is wrong, you charged me twice this month.
+    expected_route: ESCALATE
+    escalation_reason: billing
+    golden_answer: >
+      I see you have a question about billing. I can't access billing or account details, so
+      I'll escalate this to a human agent who can securely assist you.
+    notes: The chapter's escalation golden example.
+
+  - id: escalate-refund
+    category: escalation
+    query: I want a refund for last month's Atlas invoice.
+    expected_route: ESCALATE
+    escalation_reason: billing
+    golden_answer: >
+      Refunds need someone with access to your account. I'm handing this to a human agent with
+      a summary of your request.
+
+  - id: escalate-delete-account
+    category: escalation
+    query: Please delete my account and all my personal data.
+    expected_route: ESCALATE
+    escalation_reason: account
+    golden_answer: >
+      Account and personal-data deletion requests must be handled by our team. I'm escalating
+      this to a human agent.
+
+  - id: escalate-reset-login
+    category: escalation
+    query: I'm locked out of my Atlas account and the reset email never arrives.
+    expected_route: ESCALATE
+    escalation_reason: account
+    golden_answer: >
+      I can't access or change account credentials. I'm escalating this to a human agent who
+      can verify your identity and help you regain access.
+
+  - id: escalate-cluster-access
+    category: escalation
+    query: Can you restart my production cluster for me? It's unresponsive.
+    expected_route: ESCALATE
+    escalation_reason: account
+    golden_answer: >
+      I can't take actions on your deployments. I'm escalating this to a human agent right away
+      with the details you've shared.
+
+  - id: escalate-human-request
+    category: escalation
+    query: I'd like to talk to a real person please.
+    expected_route: ESCALATE
+    escalation_reason: human_request
+    golden_answer: Of course. I'm connecting you with a human agent now.
+
+  - id: escalate-human-frustrated
+    category: escalation
+    history:
+      - role: user
+        content: this stupid driver won't connect
+      - role: assistant
+        content: >
+          A connection timeout usually means a network or allowlist issue. Can you check that
+          your IP is allowed and the connection string is correct?
+    query: I already did all that, this is useless. Get me someone who can actually help.
+    expected_route: ESCALATE
+    escalation_reason: human_request
+    golden_answer: >
+      I'm sorry this is still not working. I'm escalating to a human agent with a summary of
+      what we've tried so far.
+
+  - id: escalate-security-report
+    category: escalation
+    query: I found a security vulnerability in your product. Who do I report it to?
+    expected_route: ESCALATE
+    escalation_reason: security
+    golden_answer: >
+      Thank you for reporting this. I'm escalating it to our team so it's handled through the
+      right security channel. Please don't share exploit details in this chat.
+
+  - id: escalate-out-of-scope-nginx
+    category: escalation
+    query: How do I configure an nginx reverse proxy for my React app?
+    expected_route: ESCALATE
+    escalation_reason: out_of_scope
+    golden_answer: >
+      That's outside MongoDB support, so I can't help with nginx configuration here. If you
+      have a MongoDB question, I'm happy to help, or I can connect you with a human agent.
+
+  - id: escalate-pricing-negotiation
+    category: escalation
+    query: We're an enterprise and want to negotiate a custom pricing contract.
+    expected_route: ESCALATE
+    escalation_reason: billing
+    golden_answer: >
+      Pricing and contracts are handled by our team. I'm escalating your request to a human
+      agent who can follow up.
