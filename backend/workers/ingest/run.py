@@ -1,202 +1,150 @@
-"""Ingestion run: discover → fetch → redact → chunk → store, per docs version.
+"""Ingestion entry point.
 
-    uv run python -m workers.ingest.run --versions 9.0 --limit 50
+    uv run python -m workers.ingest.run all --limit 20       # whole pipeline, then exit
+    uv run python -m workers.ingest.run schedule              # emit raw_documents only
+    uv run python -m workers.ingest.run chunk-worker --follow # consume raw_documents
+    uv run python -m workers.ingest.run index-worker --follow # consume chunked_documents
+    uv run python -m workers.ingest.run reindex               # embed anything not yet indexed
 
-Re-running is a no-op for unchanged pages (content-hash check). Pages that disappear
-from a sitemap are marked deleted, but only on full (un-limited) runs.
+``all`` is what the scheduled GitHub Actions job runs: it drains each stage in turn through
+Redpanda, garbage-collects orphan chunks and records an ``ingest_runs`` row.
 """
 
 import argparse
 import asyncio
-import hashlib
 import json
-from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-import structlog
 from sqlalchemy import func, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config import get_settings
-from app.privacy.redact import Profile, redact
+from app.config import Settings, get_settings
+from app.genai.embeddings import Embedder, make_embedder
+from app.retrieval import kb_index
+from shared.bus import EventBus, InMemoryBus, KafkaBus
 from shared.db.models import IngestRun
 from shared.db.session import make_engine, make_session_factory
+from shared.events import ALL_TOPICS, TOPIC_CHUNKED_DOCUMENTS, TOPIC_RAW_DOCUMENTS
 from shared.logging import configure_logging
 from shared.sources import DEFAULT_VERSIONS, DocVersion, get_version
-from workers.ingest.chunker import TokenCounter, chunk_markdown, default_token_counter
-from workers.ingest.crawler import DocsCrawler, FetchedPage
-from workers.ingest.store import content_hashes, delete_orphan_chunks, mark_deleted, upsert_page
+from workers.ingest.crawler import DocsCrawler
+from workers.ingest.pipeline import CHUNK_GROUP, INDEX_GROUP, Pipeline
 
-log = structlog.get_logger()
-
-
-@dataclass
-class RunStats:
-    pages: Counter[str] = field(default_factory=Counter)
-    new_chunk_ids: set[str] = field(default_factory=set)
-    orphan_chunks_deleted: int = 0
-
-    def add(self, version: DocVersion, outcome: str, n: int = 1) -> None:
-        if n:
-            self.pages[f"{version.label}:{outcome}"] += n
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "pages": dict(self.pages),
-            "new_chunks": len(self.new_chunk_ids),
-            "orphan_chunks_deleted": self.orphan_chunks_deleted,
-        }
+COMMANDS = ("all", "schedule", "chunk-worker", "index-worker", "reindex")
 
 
-def page_hash(markdown: str) -> str:
-    return hashlib.sha256(markdown.encode()).hexdigest()
-
-
-async def _process(
-    page: FetchedPage,
-    known_hashes: dict[str, str],
-    sessions: async_sessionmaker[AsyncSession],
-    count_tokens: TokenCounter,
-    stats: RunStats,
-) -> None:
-    if page.markdown is None:
-        async with sessions.begin() as session:
-            stats.add(page.version, "gone", await mark_deleted(session, page.version, [page.key]))
-        return
-    markdown = redact(page.markdown, Profile.SECRETS)
-    digest = page_hash(markdown)
-    if known_hashes.get(page.key) == digest:
-        stats.add(page.version, "unchanged")
-        return
-    parsed = await asyncio.to_thread(
-        chunk_markdown, markdown, fallback_title=page.key, count_tokens=count_tokens
-    )
-    async with sessions.begin() as session:
-        written = await upsert_page(
-            session, key=page.key, version=page.version, parsed=parsed, content_hash=digest
-        )
-    stats.new_chunk_ids.update(written.new_chunk_ids)
-    stats.add(page.version, "updated" if page.key in known_hashes else "added")
-
-
-async def ingest_version(
-    crawler: DocsCrawler,
-    sessions: async_sessionmaker[AsyncSession],
-    version: DocVersion,
-    stats: RunStats,
-    *,
-    limit: int | None = None,
-    concurrency: int = 4,
-    count_tokens: TokenCounter = default_token_counter,
-) -> None:
-    keys = await crawler.discover(version)
-    async with sessions() as session:
-        known = await content_hashes(session, version)
-    if limit is None:
-        removed = sorted(set(known) - set(keys))
-        async with sessions.begin() as session:
-            stats.add(version, "removed", await mark_deleted(session, version, removed))
-    else:
-        keys = keys[:limit]
-    log.info("ingest.version.start", version=version.label, pages=len(keys))
-
-    semaphore = asyncio.Semaphore(concurrency)
-
-    async def one(key: str) -> None:
-        async with semaphore:
-            try:
-                page = await crawler.fetch(key, version)
-                await _process(page, known, sessions, count_tokens, stats)
-            except Exception:
-                stats.add(version, "failed")
-                log.exception("ingest.page.failed", version=version.label, key=key)
-
-    await asyncio.gather(*(one(key) for key in keys))
-    log.info("ingest.version.done", version=version.label, stats=dict(stats.pages))
-
-
-async def run(
+@asynccontextmanager
+async def build_pipeline(
+    settings: Settings,
     versions: tuple[DocVersion, ...],
     *,
-    database_url: str,
-    limit: int | None = None,
-    rate_per_second: float = 2.0,
+    bus: EventBus | None = None,
     crawler: DocsCrawler | None = None,
-    count_tokens: TokenCounter = default_token_counter,
-) -> RunStats:
-    engine = make_engine(database_url)
-    sessions = make_session_factory(engine)
-    stats = RunStats()
-    async with sessions.begin() as session:
-        run_row = IngestRun(stats={"versions": [v.label for v in versions], "limit": limit})
+    embedder: Embedder | None = None,
+    rate_per_second: float = 2.0,
+) -> AsyncIterator[Pipeline]:
+    engine = make_engine(settings.database_url)
+    search = kb_index.make_client(settings)
+    if bus is None:
+        kafka = KafkaBus(settings.kafka_bootstrap_servers)
+        await kafka.ensure_topics(ALL_TOPICS)
+        bus = kafka
+    index = kb_index.KbIndex(search, settings.opensearch_index, settings.embedding_dimensions)
+    await index.ensure()
+    async with DocsCrawler.make_client() as http:
+        try:
+            yield Pipeline(
+                bus=bus,
+                sessions=make_session_factory(engine),
+                crawler=crawler or DocsCrawler(http, rate_per_second=rate_per_second),
+                index=index,
+                embedder=embedder or make_embedder(settings),
+                versions=versions,
+            )
+        finally:
+            await bus.close()
+            await search.close()
+            await engine.dispose()
+
+
+async def run_all(pipeline: Pipeline, *, limit: int | None, idle_timeout_s: float) -> None:
+    """Schedule, then drain each stage in order, then GC. Recorded in ``ingest_runs``."""
+    async with pipeline.sessions.begin() as session:
+        run_row = IngestRun(
+            stats={"versions": [v.label for v in pipeline.versions], "limit": limit}
+        )
         session.add(run_row)
     status = "failed"
     try:
-        if crawler is None:
-            async with DocsCrawler.make_client() as client:
-                await _ingest_all(
-                    DocsCrawler(client, rate_per_second=rate_per_second),
-                    sessions,
-                    versions,
-                    stats,
-                    limit,
-                    count_tokens,
-                )
-        else:
-            await _ingest_all(crawler, sessions, versions, stats, limit, count_tokens)
-        async with sessions.begin() as session:
-            stats.orphan_chunks_deleted = len(await delete_orphan_chunks(session))
-        failed = any(key.endswith(":failed") for key in stats.pages)
-        status = "partial" if failed else "success"
-        return stats
+        await pipeline.schedule(limit=limit)
+        await pipeline.bus.consume(
+            TOPIC_RAW_DOCUMENTS, CHUNK_GROUP, pipeline.handle_raw, idle_timeout_s=idle_timeout_s
+        )
+        await pipeline.bus.consume(
+            TOPIC_CHUNKED_DOCUMENTS,
+            INDEX_GROUP,
+            pipeline.handle_chunked,
+            idle_timeout_s=idle_timeout_s,
+        )
+        await pipeline.collect_garbage()
+        status = "success"
     finally:
-        async with sessions.begin() as session:
+        async with pipeline.sessions.begin() as session:
             await session.execute(
                 update(IngestRun)
                 .where(IngestRun.id == run_row.id)
                 .values(
-                    status=status, finished_at=func.now(), stats=run_row.stats | stats.as_dict()
+                    status=status,
+                    finished_at=func.now(),
+                    stats=run_row.stats | {"counts": dict(pipeline.stats)},
                 )
             )
-        await engine.dispose()
 
 
-async def _ingest_all(
-    crawler: DocsCrawler,
-    sessions: async_sessionmaker[AsyncSession],
-    versions: tuple[DocVersion, ...],
-    stats: RunStats,
-    limit: int | None,
-    count_tokens: TokenCounter,
-) -> None:
-    await crawler.load_robots()
-    for version in versions:
-        await ingest_version(
-            crawler, sessions, version, stats, limit=limit, count_tokens=count_tokens
-        )
+async def main_async(args: argparse.Namespace) -> dict[str, int]:
+    settings = get_settings()
+    versions = tuple(get_version(label) for label in args.versions)
+    bus: EventBus | None = InMemoryBus() if args.bus == "memory" else None
+    idle = None if args.follow else args.idle_timeout
+    async with build_pipeline(settings, versions, bus=bus, rate_per_second=args.rate) as pipeline:
+        if args.command == "all":
+            await run_all(pipeline, limit=args.limit, idle_timeout_s=args.idle_timeout)
+        elif args.command == "schedule":
+            await pipeline.schedule(limit=args.limit)
+        elif args.command == "chunk-worker":
+            await pipeline.bus.consume(
+                TOPIC_RAW_DOCUMENTS, CHUNK_GROUP, pipeline.handle_raw, idle_timeout_s=idle
+            )
+        elif args.command == "index-worker":
+            await pipeline.bus.consume(
+                TOPIC_CHUNKED_DOCUMENTS, INDEX_GROUP, pipeline.handle_chunked, idle_timeout_s=idle
+            )
+        elif args.command == "reindex":
+            await pipeline.index_pending()
+        return dict(pipeline.stats)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="MongoDB docs ingestion")
+    parser.add_argument("command", nargs="?", default="all", choices=COMMANDS)
     parser.add_argument(
         "--versions", nargs="+", default=[v.label for v in DEFAULT_VERSIONS], metavar="LABEL"
     )
     parser.add_argument("--limit", type=int, help="max pages per version (smoke runs)")
-    parser.add_argument("--rate", type=float, default=2.0, help="max requests per second")
+    parser.add_argument("--rate", type=float, default=2.0, help="max docs requests per second")
+    parser.add_argument("--follow", action="store_true", help="workers: run until stopped")
+    parser.add_argument(
+        "--idle-timeout", type=float, default=15.0, help="seconds of no messages before exiting"
+    )
+    parser.add_argument(
+        "--bus", choices=["kafka", "memory"], default="kafka", help="memory: no Redpanda needed"
+    )
     args = parser.parse_args()
 
     settings = get_settings()
     configure_logging(settings.log_level, json=settings.app_env != "local")
-    versions = tuple(get_version(label) for label in args.versions)
-    stats = asyncio.run(
-        run(
-            versions,
-            database_url=settings.database_url,
-            limit=args.limit,
-            rate_per_second=args.rate,
-        )
-    )
-    print(json.dumps(stats.as_dict(), indent=2))
+    stats = asyncio.run(main_async(args))
+    print(json.dumps(stats, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

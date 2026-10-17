@@ -265,7 +265,7 @@ CustomerSupportAgent/
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/api/ingest/collect` | `{source_id, url, type: DOC or TICKET, op: UPSERT or DELETE}` → `{"status":"QUEUED"}`. Writes an **outbox** row; the next ingestion run publishes it to `raw_documents`. Authenticated with a shared secret. |
+| POST | `/api/ingest/collect` | `{source_id, url, type: DOC or TICKET, op: UPSERT or DELETE}` → `202 {"status":"QUEUED", "outbox_id"}`. Writes an **outbox** row; the next ingestion run publishes it to `raw_documents`. Requires header `X-Ingest-Token`; the endpoint returns 404 when no token is configured. `TICKET` → 422 until Phase 4. |
 
 **Health:** `GET /healthz` (liveness) and `GET /readyz` (dependency checks).
 
@@ -371,8 +371,9 @@ Key Value on Render's free plan is in-memory only. **Nothing durable lives only 
    - Set the breadcrumb, e.g. `Indexes > Unique Indexes > Behavior`.
    - Redact PII.
    - `chunk_id = sha256(normalized text)[:16]`. If the chunk already exists, add a `chunk_occurrences` row for the new version (dedupe, D12). Otherwise insert it.
-   - Emit to `chunked_documents`.
-3. **EEEP worker** (entity extraction and embedding processor).
+   - Emit to `chunked_documents`, with the page's current chunk IDs and the chunks it no longer contains.
+3. **EEEP worker** (entity extraction and embedding processor). *Phase 1 implements the embedding/indexing half (`workers/ingest/pipeline.py`); entity extraction arrives in Phase 3.*
+   - **Index sync:** embed only chunks never embedded, or embedded with a different model. Chunks that only gained or lost a version get a metadata-only update; chunks with no active page are deleted. A chunk Postgres thinks is indexed but OpenSearch lacks is re-embedded automatically.
    - **Rule-based edges:** headings → `IS_PART_OF`; internal links → `REFERENCES`; regex for error codes (`E\d{5}`, plus names from the error-codes reference page), `db.collection.<method>()`, `$operators`, driver names.
    - **LLM edges:** the cheapest model with a strict JSON schema restricted to the entity and relation types above (`RESOLVES`, `HAS_ROOT_CAUSE`, `DEPENDS_ON`, `USES_COMPONENT`).
    - **Entity resolution:** normalize names, use an alias table, and MERGE on `canonical_name`.

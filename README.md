@@ -19,6 +19,7 @@ Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), Node 24 + pnpm.
 cp .env.example .env      # add OPENAI_API_KEY
 make install
 make up                   # Postgres, Valkey, Redpanda, OpenSearch, Neo4j (waits until healthy)
+make ingest-smoke         # docs → Redpanda → chunks (Postgres) → embeddings → OpenSearch, 20 pages/version
 make api                  # http://localhost:8000/docs
 make web                  # http://localhost:3000
 make check                # lint + types + tests + web build (same as CI)
@@ -45,9 +46,11 @@ gh pr create --fill                  # CI runs on the PR
 gh pr merge --squash --delete-branch # allowed only after CI passes
 ```
 
+No OpenAI key handy? `EMBEDDING_PROVIDER=hash make ingest-smoke` uses a deterministic offline embedder; switching back to OpenAI and running `make reindex` re-embeds everything.
+
 ## Status
 
-Phase 0 (foundation) is complete. See [`docs/PLAN.md` §13](docs/PLAN.md#13-delivery-phases) for the roadmap.
+Phase 0 (foundation) is complete. Phase 1 (ingestion) is in progress: docs → chunks → embeddings → hybrid search index. See [`docs/PLAN.md` §13](docs/PLAN.md#13-delivery-phases) for the roadmap.
 
 ---
 

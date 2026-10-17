@@ -30,16 +30,40 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U support -d support"
           --health-interval 5s --health-timeout 3s --health-retries 20
+      opensearch:
+        image: opensearchproject/opensearch:3.9.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports: ["9200:9200"]
+        options: >-
+          --health-cmd "curl -fs http://localhost:9200/_cluster/health"
+          --health-interval 10s --health-timeout 5s --health-retries 30
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+      # Service containers can't take a start command, so Redpanda runs via docker run.
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda -p 19092:19092 \
+            docker.redpanda.com/redpandadata/redpanda:v26.2.5 \
+            redpanda start --mode=dev-container --smp=1 --memory=1G \
+            --kafka-addr=PLAINTEXT://0.0.0.0:19092 \
+            --advertise-kafka-addr=PLAINTEXT://localhost:19092
+          for i in $(seq 1 30); do
+            docker exec redpanda rpk cluster health 2>/dev/null | grep -qE 'Healthy:.+true' && exit 0
+            sleep 2
+          done
+          docker logs redpanda; exit 1
       - uses: astral-sh/setup-uv@v10.3.0  # astral publishes exact tags only, no moving v10
         with:
           working-directory: backend
           enable-cache: true
-          cache-dependency-glob: backend/uv.lock
+          cache-dependency-glob: uv.lock  # relative to working-directory
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -48,6 +72,8 @@ jobs:
         env:
           APP_ENV: ci
           TEST_ADMIN_DSN: postgresql://support:support@localhost:5432/support
+          TEST_OPENSEARCH_URL: http://localhost:9200
+          TEST_KAFKA_SERVERS: localhost:19092
 
   web:
     name: Web (lint, build)

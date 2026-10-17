@@ -87,6 +87,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       OPENSEARCH_URL: http://opensearch:9200
       NEO4J_URI: bolt://neo4j:7687
+      INGEST_WEBHOOK_TOKEN: ${INGEST_WEBHOOK_TOKEN:-}  # set in your shell to enable the webhook
     ports: ["8000:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]

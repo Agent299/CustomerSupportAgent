@@ -18,12 +18,31 @@ class Settings(BaseSettings):
     )
 
     openai_api_key: SecretStr | None = None
+    # "openai" for real embeddings; "hash" is a deterministic, offline stand-in (tests, demos).
+    embedding_provider: Literal["openai", "hash"] = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
 
     database_url: str = "postgresql+asyncpg://support:support@localhost:5432/support"
     redis_url: str = "redis://localhost:6379/0"
     kafka_bootstrap_servers: str = "localhost:19092"
     opensearch_url: str = "http://localhost:9200"
+    opensearch_user: str | None = None
+    opensearch_password: SecretStr | None = None
+    opensearch_index: str = "kb_chunks"  # alias; the physical index is versioned behind it
     neo4j_uri: str = "bolt://localhost:7687"
+
+    # Shared secret for POST /api/ingest/collect (header X-Ingest-Token). Unset = endpoint off.
+    ingest_webhook_token: SecretStr | None = None
+
+    @field_validator("ingest_webhook_token", "openai_api_key", "opensearch_password", mode="before")
+    @classmethod
+    def _blank_secret_is_unset(cls, value: object) -> object:
+        # `KEY=` in .env or compose's ${KEY:-} yields "", which must not enable anything
+        # (an empty ingest token would match an empty header).
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

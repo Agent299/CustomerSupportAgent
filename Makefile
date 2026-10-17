@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke test lint typecheck check
+.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke reindex test lint typecheck check
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -30,11 +30,14 @@ install: ## Install backend + web dependencies
 migrate: ## Apply database migrations
 	cd backend && uv run alembic upgrade head
 
-ingest-smoke: migrate ## Ingest 20 pages per docs version (quick check)
-	cd backend && uv run python -m workers.ingest.run --limit 20
+ingest-smoke: migrate ## Pipeline on 20 pages per docs version (needs `make up`)
+	cd backend && uv run python -m workers.ingest.run all --limit 20
 
 ingest: migrate ## Full docs ingestion, all versions (~50 min at 2 req/s)
-	cd backend && uv run python -m workers.ingest.run
+	cd backend && uv run python -m workers.ingest.run all
+
+reindex: ## Embed + index chunks not yet indexed (or embedded with another model)
+	cd backend && uv run python -m workers.ingest.run reindex
 
 api: ## Run the API on the host with reload
 	cd backend && uv run uvicorn app.main:app --reload --port 8000
@@ -42,7 +45,7 @@ api: ## Run the API on the host with reload
 web: ## Run the Next.js dev server
 	cd web && pnpm dev
 
-test: ## Backend tests (integration tests need `make up`)
+test: ## Backend tests (integration tests need `make up`: Postgres, OpenSearch, Redpanda)
 	cd backend && uv run pytest
 
 lint: ## Lint backend + web

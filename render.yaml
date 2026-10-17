@@ -27,6 +27,8 @@ services:
         sync: false
       - key: NEO4J_URI
         sync: false
+      - key: INGEST_WEBHOOK_TOKEN
+        sync: false
 
   - type: web
     name: support-agent-web
