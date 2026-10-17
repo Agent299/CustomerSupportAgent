@@ -1,0 +1,44 @@
+# Render Blueprint (docs/PLAN.md §9). Free tier: the API sleeps after 15 min idle.
+# Datastores outside Render (Neon, Aiven OpenSearch, AuraDB, R2) are wired via env vars set in the dashboard.
+services:
+  - type: web
+    name: support-agent-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: support-agent-cache
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENSEARCH_URL
+        sync: false
+      - key: NEO4J_URI
+        sync: false
+
+  - type: web
+    name: support-agent-web
+    runtime: static
+    rootDir: web
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: out
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
+
+  - type: keyvalue
+    name: support-agent-cache
+    plan: free
+    ipAllowList: []   # internal connections only
