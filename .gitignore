@@ -27,3 +27,6 @@ next-env.d.ts
 
 # Local data volumes
 infra/data/
+
+# Evaluation run outputs (summaries worth keeping go to docs/evals/)
+backend/evals/reports/

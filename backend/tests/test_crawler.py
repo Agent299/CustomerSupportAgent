@@ -33,6 +33,13 @@ def test_url_mapping_round_trip() -> None:
     assert document_id("core/index-unique", V7) == "7.0:core/index-unique"
 
 
+def test_doc_key_ignores_query_and_fragment() -> None:
+    # The sitemap lists each tab of a page as its own URL, e.g. `.../?interface=driver`.
+    base = "https://www.mongodb.com/docs/manual/tutorial/insert-documents/"
+    for url in (base, f"{base}?interface=driver&language=python", f"{base}#insert-one"):
+        assert doc_key(url, V9) == "tutorial/insert-documents"
+
+
 def test_doc_key_rejects_other_versions() -> None:
     with pytest.raises(ValueError):
         doc_key("https://www.mongodb.com/docs/v7.0/core/x/", V9)

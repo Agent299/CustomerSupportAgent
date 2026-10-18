@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke reindex test lint typecheck check
+.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke reindex eval-validate eval-retrieval test lint typecheck check
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -38,6 +38,12 @@ ingest: migrate ## Full docs ingestion, all versions (~50 min at 2 req/s)
 
 reindex: ## Embed + index chunks not yet indexed (or embedded with another model)
 	cd backend && uv run python -m workers.ingest.run reindex
+
+eval-validate: ## Check the golden set against the ingested docs (needs `make ingest`)
+	cd backend && uv run python -m evals validate
+
+eval-retrieval: ## Recall@k / MRR of hybrid search on the golden set; JSON in backend/evals/reports/
+	cd backend && uv run python -m evals retrieval --out evals/reports/retrieval-$$(date -u +%Y%m%dT%H%M%SZ).json
 
 api: ## Run the API on the host with reload
 	cd backend && uv run uvicorn app.main:app --reload --port 8000

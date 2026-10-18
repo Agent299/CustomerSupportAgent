@@ -6,7 +6,7 @@
 |---|---|
 | Owner | Solo developer |
 | Status | Phase 1 (ingestion) in progress |
-| Last updated | 2026-10-17 |
+| Last updated | 2026-10-18 |
 | Hosting | Local only (Docker Compose); cloud hosting deferred ([ADR 0016](adr/0016-deployment-deferred.md)) |
 
 ---
@@ -537,7 +537,13 @@ The project runs **locally** on Docker Compose. Cloud hosting is deferred and wi
 
 ## 11. Evaluation strategy
 
-- **Golden dataset v0:** about 150 examples covering the chapter's four categories (simple FAQ, complex synthesis, error code / graph traversal, must-escalate), each tagged with a version. Stored as YAML in `backend/evals/` and loaded into Postgres.
+- **Golden dataset v0** (`backend/evals/golden/v0.yaml`): **51 examples** covering the chapter's four categories: 15 FAQ, 15 complex, 11 error code, 10 must-escalate.
+  - Includes multi-turn cases (e.g. the chapter's `My app isn't connecting` → `E11000` exchange) and version-specific cases for 8.0 and 7.0.
+  - Each answerable example lists its expected source pages and **key facts quoted from the docs**. `make eval-validate` re-checks them against the ingested pages, so the set cannot silently drift from the documentation.
+  - It grows toward about 150 examples from reviewed real conversations (Phase 4+).
+  - Kept as YAML in the repo, so it's reviewable in PRs.
+- **Retrieval baseline (Phase 1):** `make eval-retrieval` reports recall@1/3/5/10 and MRR@10 per category; summaries live in `docs/evals/`. Phases 2–3 must beat it on the same set.
+  - Recorded 2026-10-18 ([retrieval-baseline-v0](evals/retrieval-baseline-v0.md)): recall@5 **0.46**, MRR@10 **0.34** overall; error code is the weakest category (recall@5 0.36).
 - **Offline gate (CI):**
   - Retrieval recall@k.
   - Faithfulness / groundedness (judge).
