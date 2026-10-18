@@ -15,6 +15,7 @@ EscalationReason = Literal[
     "human_request",
     "out_of_scope",  # the model found nothing in the docs that answers the question
     "invalid_citation",  # the answer cited something it was not given
+    "unavailable",  # the model or search failed
 ]
 
 SUPPORTED_VERSIONS = ("9.0", "8.0", "7.0")

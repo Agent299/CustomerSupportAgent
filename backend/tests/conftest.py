@@ -16,6 +16,7 @@ from aiokafka.admin import AIOKafkaAdminClient
 from opensearchpy import AsyncOpenSearch
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from valkey.asyncio import Valkey
 
 from app.retrieval.kb_index import KbIndex
 from shared.db.session import make_engine, make_session_factory
@@ -28,6 +29,7 @@ TEST_DATABASE_URL = (
 )
 OPENSEARCH_URL = os.environ.get("TEST_OPENSEARCH_URL", "http://localhost:9200")
 KAFKA_SERVERS = os.environ.get("TEST_KAFKA_SERVERS", "localhost:19092")
+VALKEY_URL = os.environ.get("TEST_VALKEY_URL", "redis://localhost:6379/15")  # db 15: tests only
 IN_CI = os.environ.get("CI") == "true" or os.environ.get("APP_ENV") == "ci"
 TEST_DIMENSIONS = 64
 
@@ -72,8 +74,8 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE chunk_occurrences, chunks, documents, ingest_runs, ingest_outbox "
-                "RESTART IDENTITY"
+                "TRUNCATE chunk_occurrences, chunks, documents, ingest_runs, ingest_outbox, "
+                "feedback, messages, tickets, llm_usage_daily RESTART IDENTITY"
             )
         )
     yield make_session_factory(engine)
@@ -112,3 +114,19 @@ def kafka_servers() -> str:
     except Exception as exc:
         _unavailable("Kafka/Redpanda", exc)
     return KAFKA_SERVERS
+
+
+@pytest.fixture(scope="session")
+def valkey_url() -> str:
+    async def probe() -> None:
+        client = Valkey.from_url(VALKEY_URL)
+        try:
+            await client.ping()
+        finally:
+            await client.aclose()
+
+    try:
+        asyncio.run(asyncio.wait_for(probe(), timeout=5))
+    except Exception as exc:
+        _unavailable("Valkey", exc)
+    return VALKEY_URL

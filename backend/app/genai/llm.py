@@ -96,6 +96,10 @@ class LlmClient:
     def model_for(self, task: Task) -> str:
         return self._config(task).model
 
+    def metered(self) -> "LlmClient":
+        """Same connection and models, its own usage list: the cost of one chat turn."""
+        return LlmClient(self.client, self.tasks)
+
     @property
     def total_cost_usd(self) -> float:
         return sum(u.cost_usd or 0.0 for u in self.usage)
