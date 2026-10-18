@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Owner | Solo developer |
-| Status | Phase 2 (query v1) in progress |
+| Status | Phase 2 (query v1) complete; Phase 3 next |
 | Last updated | 2026-10-18 |
 | Hosting | Local only (Docker Compose); cloud hosting deferred ([ADR 0016](adr/0016-deployment-deferred.md)) |
 
@@ -593,6 +593,8 @@ Every phase ends with something demo-able for the portfolio.
 | **4. Auth, tickets, escalation** | Email-code login, quotas, state machine, calibrated confidence, summaries, agent console, live takeover | Escalation recall ≥ 0.95; end-to-end handoff demo |
 | **5. Hardening** | PII middleware, caches and coalescing, breaker and fallback, rate limits, observability, judge sampling, KB feedback loop | Simulated LLM outage handled; dashboards and alerts live |
 | **6. Hosting + showcase** | Choose a host (new ADR), deploy, k6 load test, security review, portfolio write-up with eval results | Public demo URL; latency targets met |
+
+**Phase 2 status (2026-10-18):** exit criteria met. The golden-set answer baseline is recorded and the warm first token is 2.04 s at P90 through the API ([answers-baseline-v0](evals/answers-baseline-v0.md)). Open: the answer quality bar is not met yet (see that page's follow-ups).
 
 ## 14. Risks and open items
 

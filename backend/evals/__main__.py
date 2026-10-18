@@ -3,6 +3,7 @@
 uv run python -m evals validate                 # golden set vs ingested docs
 uv run python -m evals retrieval [--out FILE]   # recall@k / MRR of hybrid search
 uv run python -m evals answers [--out FILE] [--answer-model M] [--ids a,b]  # end to end
+uv run python -m evals latency [--api URL] [--n 20]   # TTFT through the running chat API
 """
 
 import argparse
@@ -18,6 +19,7 @@ from app.orchestrator.pipeline import QueryDeps
 from app.retrieval import kb_index
 from evals.answers import AnswerReport, evaluate_answers
 from evals.golden import GOLDEN_DIR, load_golden
+from evals.latency import measure, summarize, to_json
 from evals.retrieval import RetrievalReport, evaluate_retrieval
 from evals.validate import validate
 from shared.db.session import make_engine, make_session_factory
@@ -84,7 +86,7 @@ async def run_answers(golden_path: Path, args: argparse.Namespace) -> AnswerRepo
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m evals")
-    parser.add_argument("command", choices=["validate", "retrieval", "answers"])
+    parser.add_argument("command", choices=["validate", "retrieval", "answers", "latency"])
     parser.add_argument("--golden", type=Path, default=GOLDEN_DIR / "v0.yaml")
     parser.add_argument("--out", type=Path, help="retrieval/answers: write the JSON report here")
     parser.add_argument("--answer-model", help="answers: override MODEL_HARD")
@@ -93,10 +95,19 @@ def main() -> None:
     parser.add_argument("--no-judge", action="store_true", help="answers: skip the judge")
     parser.add_argument("--ids", help="answers: comma-separated example ids only")
     parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--api", default="http://localhost:8000", help="latency: API base URL")
+    parser.add_argument("--n", type=int, default=20, help="latency: questions to time")
     args = parser.parse_args()
     report: RetrievalReport | AnswerReport
     if args.command == "validate":
         code = asyncio.run(run_validate(args.golden))
+    elif args.command == "latency":
+        samples = measure(load_golden(args.golden), args.api, args.n)
+        print(summarize(samples))
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(to_json(samples))
+        code = 0
     else:
         if args.command == "answers":
             report = asyncio.run(run_answers(args.golden, args))

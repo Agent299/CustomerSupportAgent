@@ -259,11 +259,14 @@ async def test_escalate_on_request(
 ) -> None:
     sid, headers = new_session(client)
 
+    turn(client, sid, headers, "How do unique indexes work?")
+
     response = client.post(f"{API}/sessions/{sid}/escalate", headers=headers)
-    events = read_turn(client, sid, headers, "0")
+    events = read_turn(client, sid, headers, response.json()["stream_after"])
 
     assert response.status_code == 202
-    assert events[-1][0] == "escalated" and events[-1][1]["reason"] == "human_request"
+    assert [kind for kind, _ in events] == ["escalated"]  # only this action's event
+    assert events[0][1]["reason"] == "human_request"
     async with sessions() as session:
         row = await session.get(Ticket, uuid.UUID(sid))
     assert row is not None and (row.status, row.escalation_reason) == ("ESCALATED", "human_request")

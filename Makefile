@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke reindex eval-validate eval-retrieval eval-answers test lint typecheck check
+.PHONY: help up up-app down nuke ps logs api web install migrate ingest ingest-smoke reindex eval-validate eval-retrieval eval-answers eval-latency test lint typecheck check
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -47,6 +47,9 @@ eval-retrieval: ## Recall@k / MRR of hybrid search on the golden set; JSON in ba
 
 eval-answers: ## End-to-end answers on the golden set (calls OpenAI: MODEL_EASY/HARD/JUDGE); JSON in backend/evals/reports/
 	cd backend && uv run python -m evals answers --out evals/reports/answers-$$(date -u +%Y%m%dT%H%M%SZ).json $(ARGS)
+
+eval-latency: ## Time to first token through the running API (make api); ~$0.02 of OpenAI calls
+	cd backend && uv run python -m evals latency --out evals/reports/latency-$$(date -u +%Y%m%dT%H%M%SZ).json $(ARGS)
 
 api: ## Run the API on the host with reload
 	cd backend && uv run uvicorn app.main:app --reload --port 8000
