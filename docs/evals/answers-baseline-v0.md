@@ -25,6 +25,16 @@ End-to-end quality of the headless query pipeline (`app/orchestrator/pipeline.py
 - **TTFT:** time to first token, measured from the start of the request, with 4 examples running in parallel.
 - **Cost:** about $0.001 per answer with `gpt-6-luna`; a full eval run costs about $0.44, almost all of it for the judge.
 
+## After query expansion and identifier anchors (ADR 0017)
+
+Same golden set, judge and answer model (`gpt-6-luna`, effort `low`). The search plan uses `gpt-4.1-nano`.
+
+| Slice | n | Route | Context recall | Citation hit | Judge (1–5) | Correct |
+|---|---|---|---|---|---|---|
+| **overall** | 51 | **1.00** | 0.93 | 0.85 | 4.07 | **0.76** (was 0.66) |
+
+Through the API: time to first token 1.55 s p50, **1.77 s p90**; full answer 3.71 s p90. The bar (≥ 0.85 correct when the context has the page) is still **not met**: 29 of 38 = 0.76. The comparison of configurations is in [ADR 0017](../adr/0017-query-expansion-and-identifier-anchors.md).
+
 ## Latency through the chat API (Phase 2 exit check)
 
 `make eval-latency` sends 20 answerable golden questions one at a time through the running API (HTTP + SSE, as the widget does) after one warm-up request:

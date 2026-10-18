@@ -36,6 +36,9 @@ ingest-smoke: migrate ## Pipeline on 20 pages per docs version (needs `make up`)
 ingest: migrate ## Full docs ingestion, all versions (~50 min at 2 req/s)
 	cd backend && uv run python -m workers.ingest.run all
 
+anchors: migrate ## Rebuild the identifier anchor index (also runs at the end of `make ingest`)
+	cd backend && uv run python -m workers.ingest.run anchors
+
 reindex: ## Embed + index chunks not yet indexed (or embedded with another model)
 	cd backend && uv run python -m workers.ingest.run reindex
 

@@ -7,9 +7,11 @@
     uv run python -m workers.ingest.run reindex               # embed anything not yet indexed
     uv run python -m workers.ingest.run relay --interval 60   # publish webhook outbox rows
     uv run python -m workers.ingest.run gc                    # drop orphan chunks (PG + index)
+    uv run python -m workers.ingest.run anchors               # rebuild the identifier anchors
 
-``all`` drains each stage in turn and exits. Alternatively, run ``chunk-worker --follow``,
-``index-worker --follow`` and ``relay`` continuously and trigger ``schedule`` / ``gc`` as needed.
+``all`` drains each stage in turn, rebuilds the identifier anchors and exits. Alternatively,
+run ``chunk-worker --follow``, ``index-worker --follow`` and ``relay`` continuously and trigger
+``schedule`` / ``gc`` / ``anchors`` as needed.
 """
 
 import argparse
@@ -32,7 +34,7 @@ from shared.sources import DEFAULT_VERSIONS, DocVersion, get_version
 from workers.ingest.crawler import DocsCrawler
 from workers.ingest.pipeline import CHUNK_GROUP, INDEX_GROUP, Pipeline
 
-COMMANDS = ("all", "schedule", "chunk-worker", "index-worker", "reindex", "relay", "gc")
+COMMANDS = ("all", "schedule", "chunk-worker", "index-worker", "reindex", "relay", "gc", "anchors")
 
 
 @asynccontextmanager
@@ -89,6 +91,7 @@ async def run_all(pipeline: Pipeline, *, limit: int | None, idle_timeout_s: floa
             idle_timeout_s=idle_timeout_s,
         )
         await pipeline.collect_garbage()
+        await pipeline.rebuild_anchors()
         status = "success"
     finally:
         async with pipeline.sessions.begin() as session:
@@ -129,6 +132,8 @@ async def main_async(args: argparse.Namespace) -> dict[str, int]:
                 await asyncio.sleep(args.interval)
         elif args.command == "gc":
             await pipeline.collect_garbage()
+        elif args.command == "anchors":
+            await pipeline.rebuild_anchors()
         return dict(pipeline.stats)
 
 

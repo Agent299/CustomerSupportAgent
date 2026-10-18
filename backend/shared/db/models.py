@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -80,6 +81,17 @@ class ChunkOccurrence(Base):
     )
     ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
     chunk_id: Mapped[str] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+
+
+class IdentifierAnchor(Base):
+    """Identifier → page it anchors, per version (workers/ingest/anchors.py)."""
+
+    __tablename__ = "identifier_anchors"
+
+    version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    identifier: Mapped[str] = mapped_column(String(128), primary_key=True)
+    doc_key: Mapped[str] = mapped_column(String(480), primary_key=True)
+    score: Mapped[float] = mapped_column(Float)
 
 
 class IngestOutbox(Base):

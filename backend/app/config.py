@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     model_easy_reasoning: str | None = None
     model_hard_reasoning: str | None = None
     model_judge_reasoning: str | None = None
+    # Add model-suggested search terms to every question (docs/research/graphrag-retrieval-
+    # study.md, option B). False: only multi-turn messages get a model call before search.
+    query_expansion: bool = True
     # Global LLM spend per UTC day; chat answers stop with a friendly message once reached.
     daily_spend_cap_usd: float = 2.0
 

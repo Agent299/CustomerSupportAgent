@@ -136,7 +136,7 @@ async def test_second_turn_sends_history_and_session_version(
     assert stack.index.queries[-1][1] == ["7.0"]
     answer_messages = stack.llm.calls[-1][1]
     assert [m["role"] for m in answer_messages[1:3]] == ["user", "assistant"]
-    assert [task for task, _ in stack.llm.calls].count("rewrite") == 1
+    assert [task for task, _ in stack.llm.calls].count("rewrite") == 2  # one plan per turn
 
 
 async def test_rule_escalation_then_bot_stays_out(

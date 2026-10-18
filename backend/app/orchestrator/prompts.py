@@ -1,4 +1,4 @@
-"""Prompts for query rewrite and answer synthesis (docs/PLAN.md §8.6 T2, T8; §8.9).
+"""Prompts for search planning and answer synthesis (docs/PLAN.md §8.6 T2, T8; §8.9).
 
 Retrieved docs are delimited and declared data, never instructions (prompt injection).
 """
@@ -30,19 +30,26 @@ form or option, or what the user must do when the operation fails. Skip unrelate
 - Use Markdown and fenced code blocks for commands and code.
 - Never invent option names, commands, defaults or limits."""
 
-REWRITE_SYSTEM = """\
-You turn the user's latest chat message into one standalone search query for the MongoDB \
-documentation. Use the earlier turns only to resolve what the latest message refers to. \
-Keep error codes, error messages, operator names, commands and versions verbatim. Return \
-only the query in the "query" field: no transcript, no labels, no answer.
+PLAN_SYSTEM = """\
+You prepare a search of the MongoDB documentation for the user's latest chat message.
+
+"query": the latest message as one standalone question. Use the earlier turns, if any, only \
+to resolve what it refers to. Keep error codes, error messages, operator names, commands \
+and versions verbatim.
+"terms": the MongoDB concepts, features, commands or error names the answer is documented \
+under, as a short space-separated list of search terms (e.g. E11000 -> duplicate key error \
+unique index).
+
+Do not answer the question.
 
 Example: earlier "My app isn't connecting." / "What error code do you see?", latest \
-"E11000" -> {"query": "E11000 error when my app connects"}"""
+"E11000" -> {"query": "What does error E11000 mean when my app connects?", \
+"terms": "duplicate key error unique index E11000"}"""
 
-REWRITE_SCHEMA: dict[str, Any] = {
+PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"query": {"type": "string"}},
-    "required": ["query"],
+    "properties": {"query": {"type": "string"}, "terms": {"type": "string"}},
+    "required": ["query", "terms"],
     "additionalProperties": False,
 }
 
@@ -68,14 +75,12 @@ def answer_messages(
     ]
 
 
-def rewrite_messages(query: str, history: list[Message]) -> list[Message]:
+def plan_messages(query: str, history: list[Message]) -> list[Message]:
     transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in history)
+    earlier = f"<earlier>\n{transcript}\n</earlier>\n" if history else ""
     return [
-        {"role": "system", "content": REWRITE_SYSTEM},
-        {
-            "role": "user",
-            "content": f"<earlier>\n{transcript}\n</earlier>\n<latest>\n{query}\n</latest>",
-        },
+        {"role": "system", "content": PLAN_SYSTEM},
+        {"role": "user", "content": f"{earlier}<latest>\n{query}\n</latest>"},
     ]
 
 

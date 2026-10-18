@@ -10,7 +10,7 @@ from app.genai.llm import LlmClient, Message, TaskConfig, Usage
 from app.orchestrator import pipeline, prompts
 from app.orchestrator.pipeline import QueryDeps
 from app.retrieval.kb_index import Hit
-from app.retrieval.search import Passage, diversify, to_passage
+from app.retrieval.search import Passage, best_per_page, diversify, rrf, to_passage
 from tests.fakes import FakeEmbedder, FakeIndex, FakeLlm, hit
 
 ID_A, ID_B, ID_C = "a" * 16, "b" * 16, "c" * 16
@@ -94,7 +94,7 @@ async def test_answers_with_validated_citations_and_streams_tokens() -> None:
     assert result.citations[0].url.endswith("/docs/manual/core/index-unique/")
     assert "".join(streamed).strip() == result.answer
     assert result.first_token_ms is not None
-    assert [task for task, _ in llm.calls] == ["answer"]  # turn 1: no rewrite
+    assert [task for task, _ in llm.calls] == ["rewrite", "answer"]  # plan, then answer
 
 
 async def test_rule_escalation_skips_retrieval_and_models() -> None:
@@ -121,11 +121,11 @@ async def test_unsupported_answers_escalate(answer: str, reason: str) -> None:
     assert (result.route, result.escalation_reason, result.citations) == ("ESCALATE", reason, [])
 
 
-async def test_no_passages_escalates_without_calling_the_model() -> None:
+async def test_no_passages_escalates_without_calling_the_answer_model() -> None:
     llm = FakeLlm("unused")
     result = await pipeline.answer(deps(llm, hits=[]), "How do I tune nginx?")
     assert (result.route, result.escalation_reason) == ("ESCALATE", "out_of_scope")
-    assert llm.calls == []
+    assert [task for task, _ in llm.calls] == ["rewrite"]  # the search plan only
 
 
 async def test_multi_turn_rewrites_and_uses_the_version_from_history() -> None:
@@ -148,6 +148,39 @@ async def test_multi_turn_rewrites_and_uses_the_version_from_history() -> None:
     assert answer_messages[1:3] == history  # earlier turns reach the answer model
 
 
+async def test_plan_terms_join_the_lexical_query() -> None:
+    plan = {"query": "What does E11000 mean?", "terms": "duplicate key error unique index"}
+    llm = FakeLlm(f"ok [c:{ID_A}]", rewrite=json.dumps(plan))
+    d = deps(llm)
+
+    result = await pipeline.answer(d, "What does E11000 mean?")
+
+    expected = "What does E11000 mean?\nduplicate key error unique index"
+    assert result.search_query == expected
+    assert d.index.queries == [(expected, ["9.0"])]  # type: ignore[attr-defined]
+
+
+async def test_without_expansion_turn_one_skips_the_plan_call() -> None:
+    llm = FakeLlm(f"ok [c:{ID_A}]")
+    d = deps(llm)
+    d.expand = False
+
+    result = await pipeline.answer(d, "What does E11000 mean?")
+
+    assert result.search_query == "What does E11000 mean?"
+    assert [task for task, _ in llm.calls] == ["answer"]
+
+
+async def test_slow_plan_falls_back_to_the_raw_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline, "PLAN_TIMEOUT_S", 0.05)
+    llm = FakeLlm(f"ok [c:{ID_A}]", plan_delay_s=1.0)
+
+    result = await pipeline.answer(deps(llm), "What does E11000 mean?")
+
+    assert result.route == "ANSWERED"
+    assert result.search_query == "What does E11000 mean?"
+
+
 async def test_rewrite_that_drops_the_latest_message_gets_it_appended() -> None:
     llm = FakeLlm(f"ok [c:{ID_A}]", rewrite=json.dumps({"query": "app connection error"}))
     history: list[Message] = [{"role": "user", "content": "My app isn't connecting."}]
@@ -162,7 +195,7 @@ def test_identifiers_finds_codes_operators_versions_and_api_names() -> None:
     assert pipeline.identifiers(text) == ["7.0", "$group", "E11000", "maxTimeMS", "max_time_ms"]
 
 
-async def test_unparseable_rewrite_falls_back_to_the_user_turns() -> None:
+async def test_unparseable_plan_falls_back_to_the_user_turns() -> None:
     llm = FakeLlm(f"ok [c:{ID_A}]", rewrite="not json")
     d = deps(llm)
     history: list[Message] = [{"role": "user", "content": "My app isn't connecting."}]
@@ -170,6 +203,28 @@ async def test_unparseable_rewrite_falls_back_to_the_user_turns() -> None:
     result = await pipeline.answer(d, "E11000", history)
 
     assert result.search_query == "My app isn't connecting.\nE11000"
+
+
+def test_rrf_ranks_passages_high_in_any_list_first() -> None:
+    a, b, c = passage(ID_A, "p1"), passage(ID_B, "p2"), passage(ID_C, "p3")
+
+    fused = rrf([[a, b], [c, b]])
+
+    assert [p.chunk_id for p in fused] == [ID_B, ID_A, ID_C]  # b is in both lists
+
+
+def test_best_per_page_keeps_page_order_and_caps_chunks() -> None:
+    ranked = [
+        passage("1" * 16, "p2"),
+        passage("2" * 16, "p1"),
+        passage("3" * 16, "p2"),
+        passage("4" * 16, "p2"),
+        passage("5" * 16, "other"),
+    ]
+
+    kept = best_per_page(ranked, ["p1", "p2"], per_page=2)
+
+    assert [p.chunk_id[0] for p in kept] == ["2", "1", "3"]
 
 
 async def test_version_hint_wins_over_text() -> None:

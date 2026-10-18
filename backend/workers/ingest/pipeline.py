@@ -29,6 +29,7 @@ from shared.events import (
     RawDocumentEvent,
 )
 from shared.sources import DocVersion, document_id, get_version
+from workers.ingest.anchors import rebuild_anchors
 from workers.ingest.chunker import TokenCounter, chunk_markdown, default_token_counter
 from workers.ingest.crawler import DocsCrawler
 from workers.ingest.store import (
@@ -211,6 +212,12 @@ class Pipeline:
         if orphans:
             await self.index.delete(orphans)
         self._count("chunks:orphans_deleted", len(orphans))
+
+    async def rebuild_anchors(self) -> None:
+        for version in self.versions:
+            async with self.sessions.begin() as session:
+                rows = await rebuild_anchors(session, version.label)
+            self._count(f"{version.label}:anchors", rows)
 
     # ---- helpers ----------------------------------------------------------------------
     def _metadata(self, row: ChunkForIndex) -> dict[str, Any]:

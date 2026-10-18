@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Owner | Solo developer |
-| Status | Phase 2 (query v1) complete; Phase 3 next |
+| Status | Phase 3 (retrieval lift) in progress |
 | Last updated | 2026-10-18 |
 | Hosting | Local only (Docker Compose); cloud hosting deferred ([ADR 0016](adr/0016-deployment-deferred.md)) |
 
@@ -96,6 +96,7 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | D13 | **Passwordless email-code auth that we build ourselves** | It's small, and it's the same mechanism for customers and agents (an agent is a user with a role). |
 | D14 | **Run locally only; defer cloud deployment** ([ADR 0016](adr/0016-deployment-deferred.md), supersedes ADR 0014) | Keeps momentum on the product. The code stays host-agnostic, so a host can be chosen later without restructuring. |
 | D15 | **Ingest MongoDB's official `.md` pages instead of HTML** | Every page has an official Markdown twin (about 80× smaller), and `llms.txt` invites agents to use it. Heading-exact, deterministic chunking. |
+| D16 | **Query expansion + identifier anchors before any graph** ([ADR 0017](adr/0017-query-expansion-and-identifier-anchors.md)) | A measured study found page links add nothing; a cheap model's search terms plus a deterministic identifier index closed most retrieval gaps within the latency budget. |
 
 ## 5. LLM usage policy
 
@@ -114,13 +115,13 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | Frustration signal | Lexicon scorer (e.g. VADER) + repeat-turn rules | Deterministic |
 | Confidence score, citation validation, routing, ticket transitions | Math and validation | Deterministic |
 | Embeddings | `text-embedding-3-small`; move to `-large` only if retrieval evals require it | Cheapest embedding |
-| Contextual query rewrite (multi-turn) | Skipped when turn 1 is self-contained | Easy (cheapest) |
+| Search plan: standalone query (multi-turn) + expansion terms ([ADR 0017](adr/0017-query-expansion-and-identifier-anchors.md)) | Every message; runs alongside the embedding, 2.5 s limit, falls back to the raw text | Easy (fastest cheap model) |
 | Entity / relation extraction at ingestion | Structured output, Batch API | Easy (cheapest) |
 | Escalation summary | Structured output | Easy (cheapest) |
 | **Answer synthesis** | Streamed, with citations | **Hard (frontier)** |
 | Groundedness / quality judge | On a sample of live answers + the full golden set in CI | Mid–high (stronger than what it grades) |
 
-**Current choices** (2026-10-18, [answers-baseline-v0](evals/answers-baseline-v0.md)): rewrite and answer synthesis use `gpt-6-luna` with `reasoning_effort=low`; the judge uses `gpt-6-astra`. No candidate has passed the answer bar yet (luna and `gpt-6.1-sol` both plateau around 0.75, mostly on eval and retrieval issues), so the cheapest model that meets the latency target ships, and the ladder is re-run after the eval fixes. *Deviation from the table above:* synthesis runs on the cheapest tier, not a frontier model, until an eval shows the frontier model is worth its cost.
+**Current choices** (2026-10-18, [answers-baseline-v0](evals/answers-baseline-v0.md), [ADR 0017](adr/0017-query-expansion-and-identifier-anchors.md)): the search plan (standalone query + expansion terms) uses `gpt-4.1-nano`; answer synthesis uses `gpt-6-luna` with `reasoning_effort=low`; the judge uses `gpt-6-astra`. No candidate has passed the answer bar yet (luna and `gpt-6.1-sol` both plateau around 0.75, mostly on eval and retrieval issues), so the cheapest model that meets the latency target ships, and the ladder is re-run after the eval fixes. *Deviation from the table above:* synthesis runs on the cheapest tier, not a frontier model, until an eval shows the frontier model is worth its cost.
 
 Later optimization: if evals show a cheaper model passes on a category (e.g. FAQ-like questions with high retrieval confidence), a rule-based router sends that category to it.
 
@@ -399,12 +400,13 @@ on message(text, session_id, user):
   T0  FAQ exact match (normalized text hash)            hit → stream cached answer
   T1  deterministic pre-checks: out-of-scope rules, "talk to a human",
       version/driver regex, frustration score            → may ESCALATE
-  T2  query rewrite (cheapest model) unless turn 1 is self-contained
-      → {standalone_query, entities, version?, intent}
+  T2  search plan (cheapest fast model), concurrently with the embedding of the user's turns
+      and the identifier-anchor lookup → {standalone query, expansion terms}   (ADR 0017)
   T3  response cache (standalone_query + version + model + kb_version)
-  T4  hybrid search: BM25 + kNN, normalized & weighted (0.3 / 0.7, tuned),
-      filters: versions, security_level → top 40 chunks; sum scores per document
-  T5  graph expansion (budget 300 ms, ≤ 2 hops, LIMIT 30):
+  T4  hybrid search: BM25 on query + terms, kNN on the user's turns, normalized & weighted
+      (0.3 / 0.7), filters: versions, security_level → top 40 chunks; fused (RRF) with the
+      best chunks of identifier-anchored pages
+  T5  graph expansion (deferred by ADR 0017; budget 300 ms, ≤ 2 hops, LIMIT 30):
         entity anchors:  (e:ErrorCode {canonical_name:$code})<-[:RESOLVES|HAS_ROOT_CAUSE]-(c:Chunk)
         structural:      matched Chunk -[:IS_PART_OF]-> Section <-[:IS_PART_OF]- sibling Chunks
         references:      1 hop of REFERENCES from the top documents
@@ -589,7 +591,7 @@ Every phase ends with something demo-able for the portfolio.
 | **0. Foundation** | Monorepo, Compose stack, FastAPI skeleton, Next.js skeleton, CI, ADRs | `make up` gives a healthy stack; `make test` passes; CI green |
 | **1. Ingestion v1** | Multi-version sitemap crawl → chunk → dedupe → embed → OpenSearch + Postgres; event pipeline; outbox + webhook; golden set v0 | All configured versions indexed; re-run is a no-op; nightly diff works |
 | **2. Query v1 (hybrid RAG)** | Chat API, SSE, widget, citations, guardrails, version filter, cost metering | Golden-set baseline recorded; warm first token under 3 s (P90) |
-| **3. GraphRAG** | EEEP rules + LLM extraction, Neo4j, graph expansion | Measurable lift over Phase 2 on the error-code and complex categories |
+| **3. Retrieval lift** (was GraphRAG; [ADR 0017](adr/0017-query-expansion-and-identifier-anchors.md)) | Query expansion + identifier anchors (done); then close the answer bar: reference-answer review, judge sees the docs, caveat coverage. Graph expansion only if an eval shows a gap these cannot close | Measurable lift over Phase 2 on the error-code and complex categories (met: error-code context recall 0.64 → 0.91); answer bar ≥ 0.85 |
 | **4. Auth, tickets, escalation** | Email-code login, quotas, state machine, calibrated confidence, summaries, agent console, live takeover | Escalation recall ≥ 0.95; end-to-end handoff demo |
 | **5. Hardening** | PII middleware, caches and coalescing, breaker and fallback, rate limits, observability, judge sampling, KB feedback loop | Simulated LLM outage handled; dashboards and alerts live |
 | **6. Hosting + showcase** | Choose a host (new ADR), deploy, k6 load test, security review, portfolio write-up with eval results | Public demo URL; latency targets met |
