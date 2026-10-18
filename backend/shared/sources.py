@@ -50,8 +50,10 @@ def doc_key(page_url: str, version: DocVersion) -> str:
     """
     if not page_url.startswith(version.root_url.rstrip("/")):
         raise ValueError(f"{page_url} is not under {version.root_url}")
-    rest = page_url[len(version.root_url.rstrip("/")) :].strip("/")
-    rest = rest.split("#", 1)[0].split("?", 1)[0]
+    rest = page_url[len(version.root_url.rstrip("/")) :]
+    # Drop query/fragment before trimming slashes: tab variants like `.../?interface=x`
+    # must map to the same key as the page itself.
+    rest = rest.split("#", 1)[0].split("?", 1)[0].strip("/")
     rest = rest.removesuffix(".md")
     return rest or "index"
 
