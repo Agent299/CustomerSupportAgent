@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     embedding_provider: Literal["openai", "hash"] = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
+    # Chat models per tier (docs/PLAN.md §5), chosen by per-task evals. Blank = not configured.
+    model_easy: str | None = None  # query rewrite
+    model_hard: str | None = None  # answer synthesis
+    model_judge: str | None = None  # eval judge
+    # reasoning_effort for reasoning models (e.g. "low"); blank = the model's default.
+    model_easy_reasoning: str | None = None
+    model_hard_reasoning: str | None = None
+    model_judge_reasoning: str | None = None
 
     database_url: str = "postgresql+asyncpg://support:support@localhost:5432/support"
     redis_url: str = "redis://localhost:6379/0"
@@ -35,9 +43,20 @@ class Settings(BaseSettings):
     # Shared secret for POST /api/ingest/collect (header X-Ingest-Token). Unset = endpoint off.
     ingest_webhook_token: SecretStr | None = None
 
-    @field_validator("ingest_webhook_token", "openai_api_key", "opensearch_password", mode="before")
+    @field_validator(
+        "ingest_webhook_token",
+        "openai_api_key",
+        "opensearch_password",
+        "model_easy",
+        "model_hard",
+        "model_judge",
+        "model_easy_reasoning",
+        "model_hard_reasoning",
+        "model_judge_reasoning",
+        mode="before",
+    )
     @classmethod
-    def _blank_secret_is_unset(cls, value: object) -> object:
+    def _blank_is_unset(cls, value: object) -> object:
         # `KEY=` in .env or compose's ${KEY:-} yields "", which must not enable anything
         # (an empty ingest token would match an empty header).
         if isinstance(value, str) and not value.strip():
