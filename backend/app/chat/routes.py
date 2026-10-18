@@ -143,13 +143,19 @@ async def get_transcript(session_id: uuid.UUID, token: Token, chat: Chat) -> Tra
     )
 
 
+class EscalationAccepted(BaseModel):
+    stream_after: str  # read the stream from here to receive the "escalated" event
+
+
 @router.post("/sessions/{session_id}/escalate", status_code=status.HTTP_202_ACCEPTED)
-async def escalate(session_id: uuid.UUID, token: Token, chat: Chat) -> Response:
+async def escalate(session_id: uuid.UUID, token: Token, chat: Chat) -> EscalationAccepted:
     try:
+        await chat.check_owner(session_id, token)
+        cursor = await chat.events.last_id(str(session_id))
         await chat.escalate_on_request(session_id, token)
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND) from exc
-    return Response(status_code=status.HTTP_202_ACCEPTED)
+    return EscalationAccepted(stream_after=cursor)
 
 
 @router.post("/messages/{message_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)

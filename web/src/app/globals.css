@@ -1,26 +1,152 @@
 @import "tailwindcss";
 
+/* Steel paper and blue-black ink: a technical manual with margin notes. Indigo marks
+   sources and focus only; amber marks a handoff to a person. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --paper: #e8ecf1;
+  --page: #ffffff;
+  --ink: #18212f;
+  --muted: #5a6474;
+  --rule: #cdd4de;
+  --cite: #4338ca;
+  --cite-soft: #e6e4fb;
+  --handoff: #9a5b00;
+  --handoff-soft: #fbf1e1;
+  --danger: #b42318;
+  --code-bg: #f1f3f6;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #10151d;
+    --page: #171e29;
+    --ink: #e4e8ee;
+    --muted: #9aa4b2;
+    --rule: #2c3644;
+    --cite: #a5a0ff;
+    --cite-soft: #27264a;
+    --handoff: #f0b35a;
+    --handoff-soft: #2e2416;
+    --danger: #ff8a7a;
+    --code-bg: #0f141b;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-page: var(--page);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-cite: var(--cite);
+  --color-cite-soft: var(--cite-soft);
+  --color-handoff: var(--handoff);
+  --color-handoff-soft: var(--handoff-soft);
+  --color-danger: var(--danger);
+  --color-code: var(--code-bg);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-plex-sans), system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cite);
+  outline-offset: 2px;
+}
+
+/* ---- answer typography (rendered Markdown) ---- */
+.answer > * + * {
+  margin-top: 0.75em;
+}
+.answer .md-heading {
+  font-weight: 600;
+  margin-top: 1.25em;
+}
+.answer .md-ul,
+.answer .md-ol {
+  padding-left: 1.25em;
+}
+.answer .md-ul {
+  list-style: disc;
+}
+.answer .md-ol {
+  list-style: decimal;
+}
+.answer li + li {
+  margin-top: 0.25em;
+}
+.answer code {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+.answer .md-code {
+  background: var(--code-bg);
+  border-left: 3px solid var(--rule);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.answer .md-code code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.answer a:not(.cite-mark) {
+  color: var(--cite);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A citation: a small raised number that matches the margin note. */
+.cite-mark {
+  display: inline-block;
+  min-width: 1.25em;
+  margin-left: 0.15em;
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: var(--cite-soft);
+  color: var(--cite);
+  font-size: 0.7em;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  vertical-align: super;
+  text-decoration: none;
+}
+a.cite-mark:hover {
+  background: var(--cite);
+  color: var(--page);
+}
+
+/* The caret while an answer streams in. */
+.streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.15em;
+  vertical-align: text-bottom;
+  background: var(--cite);
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .streaming > :last-child::after {
+    animation: none;
+  }
 }
