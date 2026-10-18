@@ -1,8 +1,10 @@
 from collections import Counter
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from evals.answers import AnswerReport, ExampleOutcome
 from evals.golden import GoldenExample, GoldenSet, load_golden
 from evals.metrics import first_relevant_rank, mean, recall_at, reciprocal_rank
 from evals.retrieval import ExampleResult, RetrievalReport
@@ -172,3 +174,64 @@ async def test_validate_against_ingested_pages(sessions) -> None:  # type: ignor
         await mark_deleted(session, v9, "reference/default-mongodb-port")
     async with sessions() as session:
         assert any(p.example_id == "ok" for p in await validate(session, golden))
+
+
+def _outcome(**overrides: Any) -> ExampleOutcome:
+    base: dict[str, Any] = {
+        "id": "x",
+        "category": "faq",
+        "expected_route": "ANSWERED",
+        "route": "ANSWERED",
+        "escalation_reason": None,
+        "version": "9.0",
+        "search_query": "q",
+        "context_hit": True,
+        "citation_hit": True,
+        "judge_score": 5,
+        "judge_reason": "ok",
+        "first_token_ms": 1000,
+        "latency_ms": 2000,
+        "answer": "a",
+        "cited_pages": [],
+        "context_pages": [],
+    }
+    return ExampleOutcome(**{**base, **overrides})
+
+
+def test_answer_report_metrics() -> None:
+    report = AnswerReport("g", {"answer": "m"}, "now")
+    report.examples = [
+        _outcome(id="good", first_token_ms=1000),
+        _outcome(id="weak", judge_score=3, citation_hit=False, first_token_ms=2000),
+        _outcome(
+            id="missed",
+            route="ESCALATE",
+            escalation_reason="out_of_scope",
+            context_hit=False,
+            citation_hit=None,
+            judge_score=None,
+            first_token_ms=3000,
+        ),
+        _outcome(
+            id="esc",
+            category="escalation",
+            expected_route="ESCALATE",
+            route="ESCALATE",
+            context_hit=None,
+            citation_hit=None,
+            judge_score=None,
+            first_token_ms=None,
+        ),
+    ]
+
+    m = report.metrics()
+
+    assert m["route_accuracy"] == pytest.approx(3 / 4)
+    assert m["escalation_recall"] == 1.0
+    assert m["answer_rate"] == pytest.approx(2 / 3)
+    assert m["context_recall"] == pytest.approx(2 / 3)
+    assert m["citation_hit"] == pytest.approx(1 / 2)  # over answered examples only
+    assert m["judge_mean"] == pytest.approx(4.0)
+    assert m["correct_rate"] == pytest.approx(1 / 3)  # escalated answerable counts as a miss
+    assert (m["ttft_p50_ms"], m["ttft_p90_ms"]) == (2000.0, 3000.0)
+    assert "Wrong route: `missed`" in report.to_markdown()

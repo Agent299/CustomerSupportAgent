@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Owner | Solo developer |
-| Status | Phase 1 (ingestion) in progress |
+| Status | Phase 2 (query v1) in progress |
 | Last updated | 2026-10-18 |
 | Hosting | Local only (Docker Compose); cloud hosting deferred ([ADR 0016](adr/0016-deployment-deferred.md)) |
 
@@ -119,6 +119,8 @@ Each decision has an ADR in [`docs/adr/`](adr/).
 | Escalation summary | Structured output | Easy (cheapest) |
 | **Answer synthesis** | Streamed, with citations | **Hard (frontier)** |
 | Groundedness / quality judge | On a sample of live answers + the full golden set in CI | Mid–high (stronger than what it grades) |
+
+**Current choices** (2026-10-18, [answers-baseline-v0](evals/answers-baseline-v0.md)): rewrite and answer synthesis use `gpt-6-luna` with `reasoning_effort=low`; the judge uses `gpt-6-astra`. No candidate has passed the answer bar yet (luna and `gpt-6.1-sol` both plateau around 0.75, mostly on eval and retrieval issues), so the cheapest model that meets the latency target ships, and the ladder is re-run after the eval fixes. *Deviation from the table above:* synthesis runs on the cheapest tier, not a frontier model, until an eval shows the frontier model is worth its cost.
 
 Later optimization: if evals show a cheaper model passes on a category (e.g. FAQ-like questions with high retrieval confidence), a rule-based router sends that category to it.
 
@@ -542,6 +544,7 @@ The project runs **locally** on Docker Compose. Cloud hosting is deferred and wi
   - Each answerable example lists its expected source pages and **key facts quoted from the docs**. `make eval-validate` re-checks them against the ingested pages, so the set cannot silently drift from the documentation.
   - It grows toward about 150 examples from reviewed real conversations (Phase 4+).
   - Kept as YAML in the repo, so it's reviewable in PRs.
+- **Answer baseline (Phase 2):** `make eval-answers` runs the full pipeline on every example: routing, escalation recall, context recall, citation hit, judge correctness (1–5) and time to first token ([answers-baseline-v0](evals/answers-baseline-v0.md)).
 - **Retrieval baseline (Phase 1):** `make eval-retrieval` reports recall@1/3/5/10 and MRR@10 per category; summaries live in `docs/evals/`. Phases 2–3 must beat it on the same set.
   - Recorded 2026-10-18 ([retrieval-baseline-v0](evals/retrieval-baseline-v0.md)): recall@5 **0.68**, MRR@10 **0.55** overall after a label review; error code is the weakest category (recall@5 0.55).
 - **Offline gate (CI):**
