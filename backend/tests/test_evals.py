@@ -4,11 +4,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from evals.answers import AnswerReport, ExampleOutcome
+from app.orchestrator.pipeline import AnswerResult, Citation
+from app.retrieval.search import Passage
+from evals.answers import AnswerReport, ExampleOutcome, judge
 from evals.golden import GoldenExample, GoldenSet, load_golden
 from evals.metrics import first_relevant_rank, mean, recall_at, reciprocal_rank
 from evals.retrieval import ExampleResult, RetrievalReport
 from evals.validate import check_example, normalize
+from tests.fakes import FakeLlm
 
 
 @pytest.fixture(scope="module")
@@ -235,3 +238,42 @@ def test_answer_report_metrics() -> None:
     assert m["correct_rate"] == pytest.approx(1 / 3)  # escalated answerable counts as a miss
     assert (m["ttft_p50_ms"], m["ttft_p90_ms"]) == (2000.0, 3000.0)
     assert "Wrong route: `missed`" in report.to_markdown()
+
+
+async def test_judge_sees_only_the_cited_passages() -> None:
+    cited = Passage(
+        "a" * 16,
+        1.0,
+        "Unique indexes reject duplicates.",
+        "Unique",
+        "Unique Indexes",
+        ["core/index-unique"],
+        ["9.0"],
+        "u",
+        10,
+    )
+    uncited = Passage("b" * 16, 1.0, "Unrelated text.", "Other", "Other", ["x"], ["9.0"], "u", 10)
+    result = AnswerResult(
+        "ANSWERED",
+        "9.0",
+        answer=f"A unique index rejects duplicates [c:{'a' * 16}].",
+        citations=[Citation("a" * 16, "u", "Unique Indexes", ["9.0"])],
+        passages=[cited, uncited],
+    )
+    llm = FakeLlm("unused", rewrite='{"reason": "ok", "score": 9}')
+    example = GoldenExample(
+        id="x",
+        category="faq",
+        query="What does E11000 mean?",
+        expected_route="ANSWERED",
+        expected_sources=["core/index-unique"],
+        key_facts=["duplicate"],
+        golden_answer="A duplicate key in a unique index.",
+    )
+
+    score, _ = await judge(llm, example, result)
+
+    prompt = llm.calls[-1][1][-1]["content"]
+    assert "Unique indexes reject duplicates." in prompt
+    assert "Unrelated text." not in prompt
+    assert score == 5  # clamped to the rubric

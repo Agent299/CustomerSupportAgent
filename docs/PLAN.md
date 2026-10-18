@@ -558,7 +558,7 @@ The project runs **locally** on Docker Compose. Cloud hosting is deferred and wi
 - **Offline gate (CI):**
   - Retrieval recall@k.
   - Faithfulness / groundedness (judge).
-  - Answer correctness against the golden answer (1–5 judge rubric from the chapter).
+  - Answer correctness against the golden answer (1–5 judge rubric from the chapter). The judge also sees the passages the answer cites and follows the docs where the reference is less precise; references are corrected only when the docs contradict them ([reference-audit-v0](evals/reference-audit-v0.md)).
   - Routing accuracy and escalation recall.
   - The build fails on a regression.
 - **Per-task model evals (§5):** small labeled sets for rewrite, extraction and summary, used to pick the cheapest passing model.

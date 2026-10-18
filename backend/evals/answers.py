@@ -3,7 +3,8 @@
 Runs the real query pipeline per example and scores, deterministically: routing, escalation
 recall, context recall (an expected page reached the model), citation hit (the answer cites
 one) and time to first token; with a judge model: correctness 1-5 against the golden answer
-(the chapter's rubric). Used to pick the cheapest model that passes each task (§5).
+(the chapter's rubric), with the cited passages as the authority where the reference is less
+precise. Used to pick the cheapest model that passes each task (§5).
 """
 
 import asyncio
@@ -19,8 +20,19 @@ from evals.golden import GoldenExample, GoldenSet
 from evals.metrics import mean
 
 JUDGE_SYSTEM = """\
-You grade a support assistant's answer to a MongoDB question against a reference answer \
-written from the official documentation. Score correctness from 1 to 5:
+You grade a support assistant's answer to a MongoDB question. You get a reference answer \
+written from the official documentation, the facts a correct answer should contain, and \
+the documentation passages the assistant cited.
+
+The documentation is the authority. The reference is a guide to what a good answer \
+covers, but it is shorter and may be less precise than the docs: where the cited passages \
+state something more precisely than the reference, or differently, an answer that follows \
+the passages is correct. A claim that the passages or the reference contradict is an \
+error. Grade correctness only: a true statement that the passages happen not to cover is \
+not an error (groundedness is measured separately), and naming the MongoDB version the \
+question is about is context, not a claim.
+
+Score correctness from 1 to 5:
 5 = correct and complete: covers the reference's key points, nothing wrong.
 4 = correct, minor omission or imprecision that would not mislead the user.
 3 = partially correct: misses an important point or includes a minor error.
@@ -163,13 +175,22 @@ def _fmt(value: float | None, key: str) -> str:
 
 
 async def judge(llm: ChatModel, example: GoldenExample, result: AnswerResult) -> tuple[int, str]:
+    cited = {c.chunk_id for c in result.citations}
+    passages = "\n\n".join(
+        f'<passage id="c:{p.chunk_id}" title="{p.title}" section="{p.breadcrumb}">\n'
+        f"{p.text}\n</passage>"
+        for p in result.passages
+        if p.chunk_id in cited
+    )
     messages: list[Message] = [
         {"role": "system", "content": JUDGE_SYSTEM},
         {
             "role": "user",
             "content": (
-                f"Question: {example.search_text}\n\nReference answer: {example.golden_answer}\n\n"
+                f"Question (MongoDB {example.effective_version}): {example.search_text}\n\n"
+                f"Reference answer: {example.golden_answer}\n\n"
                 f"Facts the answer should contain: {json.dumps(example.key_facts)}\n\n"
+                f"Cited documentation:\n{passages or '(none)'}\n\n"
                 f"Assistant answer:\n{result.answer}"
             ),
         },

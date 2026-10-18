@@ -35,6 +35,25 @@ Same golden set, judge and answer model (`gpt-6-luna`, effort `low`). The search
 
 Through the API: time to first token 1.55 s p50, **1.77 s p90**; full answer 3.71 s p90. The bar (≥ 0.85 correct when the context has the page) is still **not met**: 29 of 38 = 0.76. The comparison of configurations is in [ADR 0017](../adr/0017-query-expansion-and-identifier-anchors.md).
 
+## After the reference audit and a docs-aware judge (2026-10-18)
+
+Two changes to the *measure*, not the system:
+
+- **References:** 10 golden answers corrected where the docs contradict them ([reference-audit-v0](reference-audit-v0.md)).
+- **Judge:** it now also sees the passages the answer cites, and follows them where they are more precise than the reference. It grades correctness only: a true statement the passages don't cover is not an error.
+
+| Slice | n | Route | Context recall | Citation hit | Judge (1–5) | Correct |
+|---|---|---|---|---|---|---|
+| **overall** | 51 | 1.00 | 0.93 | 0.80 | 4.20 | **0.80** |
+| complex | 15 | 1.00 | 0.93 | 0.87 | 4.33 | 0.87 |
+| error_code | 11 | 1.00 | 0.91 | 0.55 | 3.91 | 0.64 |
+| faq | 15 | 1.00 | 0.93 | 0.93 | 4.27 | 0.87 |
+
+- **Bar:** 31 of 38 = **0.82** (≥ 0.85 needed), so still **not met**. No answer scores ≤ 2 and there are no invalid citations.
+- **A misstep, kept for the record.** The first version of the new judge also counted any specific claim the cited passages didn't cover as an error. That pulled correctness down to 0.68, flagging true statements such as "In MongoDB 9.0" and `mongodump --uri`. That's groundedness, a separate metric (PLAN §11), so the rule was removed; this table is the only run after the fix. Judge prompts are not tuned further to move the number.
+- **Comparability:** earlier rows on this page used the old judge and references. The 0.76 → 0.80 change is within the ±0.05 noise of 41 examples.
+- **What's left:** all 8 examples below 4 are answers that leave out a point the reference makes and the docs support: the `mongodb+srv://` format, `validationAction`, the explicit-session fix for idle cursors, cache pressure, the ESR/ERS ordering, `authSource`, the standalone procedure, and indexing the foreign field for `$lookup`. Answer completeness is the next lever.
+
 ## Latency through the chat API (Phase 2 exit check)
 
 `make eval-latency` sends 20 answerable golden questions one at a time through the running API (HTTP + SSE, as the widget does) after one warm-up request:
