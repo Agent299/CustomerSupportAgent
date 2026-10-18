@@ -543,7 +543,7 @@ The project runs **locally** on Docker Compose. Cloud hosting is deferred and wi
   - It grows toward about 150 examples from reviewed real conversations (Phase 4+).
   - Kept as YAML in the repo, so it's reviewable in PRs.
 - **Retrieval baseline (Phase 1):** `make eval-retrieval` reports recall@1/3/5/10 and MRR@10 per category; summaries live in `docs/evals/`. Phases 2–3 must beat it on the same set.
-  - Recorded 2026-10-18 ([retrieval-baseline-v0](evals/retrieval-baseline-v0.md)): recall@5 **0.46**, MRR@10 **0.34** overall; error code is the weakest category (recall@5 0.36).
+  - Recorded 2026-10-18 ([retrieval-baseline-v0](evals/retrieval-baseline-v0.md)): recall@5 **0.68**, MRR@10 **0.55** overall after a label review; error code is the weakest category (recall@5 0.55).
 - **Offline gate (CI):**
   - Retrieval recall@k.
   - Faithfulness / groundedness (judge).

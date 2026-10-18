@@ -4,6 +4,10 @@ description: >
   Every expected source and key fact was checked against MongoDB's official Markdown docs on
   2026-10-17 and is re-checked by `python -m evals validate`. Key facts quote the docs'
   wording; golden answers paraphrase them.
+  expected_sources lists every page that answers the question on its own; a hit on any one
+  counts. An alternative page is added only if it contains all of the example's key facts and
+  is about the question, not just mentioning it (label review 2026-10-18,
+  docs/evals/retrieval-baseline-v0.md).
 
 examples:
   # ───────────────────────── FAQ: simple, single-page answers ─────────────────────────
@@ -21,7 +25,9 @@ examples:
     category: faq
     query: How do I connect to the database? What does the connection string look like?
     expected_route: ANSWERED
-    expected_sources: [reference/connection-string]
+    expected_sources:
+      - reference/connection-string
+      - reference/connection-string-formats  # label review 2026-10-18
     key_facts: ["mongodb://", "mongodb+srv://"]
     golden_answer: >
       Use a connection string URI with your driver or mongosh. The standard format is
@@ -32,7 +38,11 @@ examples:
     category: faq
     query: How do I create an index on a field?
     expected_route: ANSWERED
-    expected_sources: [reference/method/db.collection.createindex]
+    expected_sources:
+      - reference/method/db.collection.createindex
+      - core/indexes/create-index  # label review 2026-10-18
+      - core/indexes/index-types/index-single/create-single-field-index  # label review 2026-10-18
+      - faq/indexes  # label review 2026-10-18
     key_facts: ["db.collection.createIndex("]
     golden_answer: >
       Call db.collection.createIndex() with a key pattern, e.g.
@@ -43,7 +53,9 @@ examples:
     category: faq
     query: how do i insert a single document into a collection
     expected_route: ANSWERED
-    expected_sources: [reference/method/db.collection.insertone]
+    expected_sources:
+      - reference/method/db.collection.insertone
+      - tutorial/insert-documents  # label review 2026-10-18
     key_facts: ["insertOne", "_id"]
     golden_answer: >
       Use db.collection.insertOne(document). If the document has no _id field, MongoDB adds
@@ -74,7 +86,9 @@ examples:
     category: faq
     query: How do I create a database user with specific roles?
     expected_route: ANSWERED
-    expected_sources: [reference/method/db.createuser]
+    expected_sources:
+      - reference/method/db.createuser
+      - reference/command/createuser  # label review 2026-10-18
     key_facts: ["db.createUser(", "roles"]
     golden_answer: >
       Use db.createUser() in the database where the user should be defined, passing user,
@@ -100,7 +114,9 @@ examples:
     category: faq
     query: Can documents expire automatically after a certain time?
     expected_route: ANSWERED
-    expected_sources: [core/index-ttl]
+    expected_sources:
+      - core/index-ttl
+      - tutorial/expire-data  # label review 2026-10-18
     key_facts: ["expireAfterSeconds"]
     golden_answer: >
       Yes. Create a TTL index on a date field with the expireAfterSeconds option, e.g.
@@ -114,6 +130,8 @@ examples:
     expected_sources:
       - reference/method/db.collection.explain
       - reference/method/cursor.explain
+      - reference/command/explain  # label review 2026-10-18
+      - tutorial/analyze-query-plan  # label review 2026-10-18
     key_facts: ["executionStats", "queryPlanner"]
     golden_answer: >
       Run the query with explain(), e.g. db.coll.find(filter).explain("executionStats").
@@ -135,7 +153,9 @@ examples:
     category: faq
     query: What is the maximum size of a single document?
     expected_route: ANSWERED
-    expected_sources: [reference/limits]
+    expected_sources:
+      - reference/limits
+      - core/document  # label review 2026-10-18
     key_facts: ["16 mebibytes"]
     golden_answer: >
       The maximum BSON document size is 16 mebibytes. For larger data, use GridFS or
@@ -228,7 +248,11 @@ examples:
     category: complex
     query: Should I embed related data in one document or reference it from another collection?
     expected_route: ANSWERED
-    expected_sources: [data-modeling/embedding, data-modeling]
+    expected_sources:
+      - data-modeling/embedding
+      - data-modeling
+      - data-modeling/referencing  # label review 2026-10-18
+      - data-modeling/schema-design-process/map-relationships  # label review 2026-10-18
     key_facts: ["embedded"]
     golden_answer: >
       Embed data that is read together and has a bounded size (one-to-one, one-to-few): one read
@@ -263,7 +287,11 @@ examples:
     category: complex
     query: Can I put a unique index on email in a sharded collection whose shard key is userId?
     expected_route: ANSWERED
-    expected_sources: [core/index-unique, core/sharding-shard-key-indexes]
+    expected_sources:
+      - core/index-unique
+      - core/sharding-shard-key-indexes
+      - tutorial/shard-collection-with-unique-index  # label review 2026-10-18
+      - tutorial/create-unique-index-on-sharded-collection  # label review 2026-10-18
     key_facts: ["shard key"]
     golden_answer: >
       Not as a plain unique index. On sharded collections only the shard key index, a compound
@@ -274,7 +302,9 @@ examples:
     category: complex
     query: What does write concern w majority actually guarantee?
     expected_route: ANSWERED
-    expected_sources: [reference/write-concern]
+    expected_sources:
+      - reference/write-concern
+      - core/replica-set-write-concern  # label review 2026-10-18
     key_facts: ["majority"]
     golden_answer: >
       With w: "majority" the write is acknowledged only after a majority of the data-bearing
@@ -318,7 +348,9 @@ examples:
     category: complex
     query: My aggregation with $group fails because it uses too much memory. What can I do?
     expected_route: ANSWERED
-    expected_sources: [core/aggregation-pipeline-limits]
+    expected_sources:
+      - core/aggregation-pipeline-limits
+      - reference/operator/aggregation/group  # label review 2026-10-18
     key_facts: ["100 megabytes", "allowDiskUse"]
     golden_answer: >
       Stages needing more than 100 megabytes of memory must be allowed to write temporary files
@@ -335,7 +367,9 @@ examples:
         content: Thanks, noted that you're on 7.0. What do you need help with?
     query: How do I compute the median of a numeric field in an aggregation?
     expected_route: ANSWERED
-    expected_sources: [reference/operator/aggregation/median]
+    expected_sources:
+      - reference/operator/aggregation/median
+      - reference/expression/median  # label review 2026-10-18
     key_facts: ["$median", "New in version 7.0"]
     golden_answer: >
       Use the $median accumulator (new in 7.0), e.g. in $group:
@@ -413,7 +447,11 @@ examples:
     category: error_code
     query: "My query fails with: Sort exceeded memory limit"
     expected_route: ANSWERED
-    expected_sources: [reference/method/cursor.sort, reference/method/cursor.allowdiskuse]
+    expected_sources:
+      - reference/method/cursor.sort
+      - reference/method/cursor.allowdiskuse
+      - reference/limits  # label review 2026-10-18
+      - reference/operator/aggregation/sort  # label review 2026-10-18
     key_facts: ["100 megabytes", "allowDiskUse"]
     golden_answer: >
       A blocking sort needed more than 100 megabytes of memory and disk use was disabled. Add
@@ -424,7 +462,9 @@ examples:
     category: error_code
     query: Insert fails with BSONObjectTooLarge.
     expected_route: ANSWERED
-    expected_sources: [reference/limits]
+    expected_sources:
+      - reference/limits
+      - core/document  # label review 2026-10-18
     key_facts: ["16 mebibytes", "GridFS"]
     golden_answer: >
       The document exceeds the maximum BSON document size of 16 mebibytes. Split it (e.g. move
@@ -467,7 +507,11 @@ examples:
     category: error_code
     query: "Queries fail with: operation exceeded time limit"
     expected_route: ANSWERED
-    expected_sources: [reference/method/cursor.maxtimems]
+    expected_sources:
+      - reference/method/cursor.maxtimems
+      - tutorial/query-documents/specify-query-timeout  # label review 2026-10-18
+      - reference/cluster-parameters/defaultmaxtimems  # label review 2026-10-18
+      - tutorial/terminate-running-operations  # label review 2026-10-18
     key_facts: ["maxTimeMS"]
     golden_answer: >
       A time limit set with maxTimeMS was hit and the server stopped the operation. Make the
