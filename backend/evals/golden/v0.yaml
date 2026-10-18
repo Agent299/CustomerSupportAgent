@@ -7,7 +7,9 @@ description: >
   expected_sources lists every page that answers the question on its own; a hit on any one
   counts. An alternative page is added only if it contains all of the example's key facts and
   is about the question, not just mentioning it (label review 2026-10-18,
-  docs/evals/retrieval-baseline-v0.md).
+  docs/evals/retrieval-baseline-v0.md). Golden answers were audited against the docs on
+  2026-10-18; 10 were corrected where the docs contradicted them or stated a condition
+  differently (docs/evals/answers-baseline-v0.md).
 
 examples:
   # ───────────────────────── FAQ: simple, single-page answers ─────────────────────────
@@ -103,9 +105,10 @@ examples:
       - tutorial/enable-authentication
     key_facts: ["security.authorization", "createUser"]
     golden_answer: >
-      Create an administrative user first (db.createUser in the admin database), then restart
-      mongod with access control enabled: security.authorization: enabled in the config file
-      (or --auth). Clients must then authenticate, e.g. with SCRAM.
+      On a standalone mongod: create an administrative user first (db.createUser in the admin
+      database), then restart mongod with access control enabled: security.authorization:
+      enabled in the config file (or --auth). Clients must then authenticate, e.g. with SCRAM.
+      Replica sets and sharded clusters have their own procedure.
     notes: >
       enable-authentication is a hub page; the procedure lives on the SCRAM tutorial it links
       to (a REFERENCES edge for Phase 3).
@@ -207,9 +210,10 @@ examples:
     key_facts: ["Equality", "Sort", "Range"]
     golden_answer: >
       An index on only the sort field often can't serve both the filter and the sort. Build a
-      compound index following the ESR guideline: equality-match fields first, then the sort
-      fields, then range fields. Check with explain('executionStats') that the plan uses an
-      IXSCAN without an in-memory SORT stage.
+      compound index with equality-match fields first; then put the sort fields before range
+      fields (ESR) to avoid an in-memory sort, or range before sort (ERS) when the range filter
+      is very selective. Check with explain('executionStats') that the plan uses an IXSCAN
+      without an in-memory SORT stage.
     notes: The chapter's "complex query" golden example.
 
   - id: complex-covered-query
@@ -230,8 +234,8 @@ examples:
     expected_sources: [core/transactions-production-consideration, core/transactions]
     key_facts: ["standalone"]
     golden_answer: >
-      No. Multi-document transactions need a replica set or sharded cluster. For development,
-      run a single-node replica set instead of a standalone mongod.
+      No. A standalone mongod doesn't support multi-document transactions: the docs require a
+      multiple-node replica set or a sharded cluster.
 
   - id: complex-transaction-lifetime
     category: complex
@@ -267,9 +271,9 @@ examples:
     expected_sources: [core/sharding-choose-a-shard-key]
     key_facts: ["cardinality", "frequency", "monotonically"]
     golden_answer: >
-      Choose a key with high cardinality, low frequency of repeated values, and values that do
-      not increase monotonically (to avoid hot spots on one shard), and that matches your common
-      query patterns so queries can be targeted.
+      Choose a key with high cardinality, low frequency of repeated values, and values that
+      neither increase nor decrease monotonically (which would send inserts to a single chunk),
+      and that matches your common query patterns so queries can be targeted.
 
   - id: complex-ttl-delay
     category: complex
@@ -307,9 +311,10 @@ examples:
       - core/replica-set-write-concern  # label review 2026-10-18
     key_facts: ["majority"]
     golden_answer: >
-      With w: "majority" the write is acknowledged only after a majority of the data-bearing
-      voting members have applied it, so it survives a primary failover and won't be rolled
-      back.
+      With w: "majority" the write is acknowledged once a calculated majority of the
+      data-bearing voting members have durably written it to their oplogs (since 8.0; they
+      apply it asynchronously afterwards), so an acknowledged write survives a primary
+      failover and is not rolled back.
 
   - id: complex-read-preference
     category: complex
@@ -318,9 +323,10 @@ examples:
     expected_sources: [core/read-preference]
     key_facts: ["asynchronous process", "stale data"]
     golden_answer: >
-      Every read preference except primary may return stale data, because secondaries
-      replicate from the primary in an asynchronous process. Use primary (or primaryPreferred)
-      for reads that must be current, or bound staleness with maxStalenessSeconds.
+      Every read preference except primary may return stale data (primaryPreferred included,
+      when it falls back to a secondary), because secondaries replicate asynchronously. Use
+      primary for reads that must be current; maxStalenessSeconds avoids secondaries the
+      client estimates are too far behind.
 
   - id: complex-retryable-writes
     category: complex
@@ -330,8 +336,8 @@ examples:
     key_facts: ["retryWrites", "once"]
     golden_answer: >
       Usually not. With retryable writes (retryWrites=true, the default in current drivers)
-      the driver retries supported writes once after network errors or when no healthy primary
-      is found. This requires a replica set or sharded cluster.
+      the driver retries supported writes, once by default, after transient network errors or
+      when no healthy primary is found. This requires a replica set or sharded cluster.
 
   - id: complex-lookup
     category: complex
@@ -438,10 +444,10 @@ examples:
     expected_sources: [core/transactions-production-consideration]
     key_facts: ["write conflict"]
     golden_answer: >
-      Another operation modified the same document concurrently, or the transaction's
-      modifications didn't fit in the WiredTiger cache, so it was aborted. Retry the whole
-      transaction (the driver's withTransaction / callback API does this for transient
-      errors) and keep transactions small.
+      A write outside the transaction modified a document the transaction then tried to
+      modify, or the uncommitted transaction put excessive pressure on the WiredTiger cache,
+      so it was aborted. Retry the whole transaction (the driver's withTransaction / callback
+      API does this for transient errors) and keep transactions small.
 
   - id: error-sort-memory
     category: error_code
@@ -489,8 +495,9 @@ examples:
     key_facts: ["period of inactivity", "30 minutes"]
     golden_answer: >
       The server closed the cursor after a period of inactivity, or its session expired after
-      being idle for longer than 30 minutes. Process batches faster or use smaller batches, and
-      for long jobs use an explicit session and refresh it periodically.
+      being idle for longer than 30 minutes. Process batches faster or use smaller batches; if
+      the cursor may be idle for longer than 30 minutes, run the operation in an explicit
+      session and refresh it periodically.
 
   - id: error-auth-failed
     category: error_code
@@ -514,9 +521,9 @@ examples:
       - tutorial/terminate-running-operations  # label review 2026-10-18
     key_facts: ["maxTimeMS"]
     golden_answer: >
-      A time limit set with maxTimeMS was hit and the server stopped the operation. Make the
-      query cheaper (indexes, narrower filters) or raise the maxTimeMS value if the limit is
-      too strict.
+      The operation exceeded its time limit, either its own maxTimeMS or, when it sets none,
+      the defaultMaxTimeMS cluster parameter, and the server stopped it. Make the query cheaper
+      (indexes, narrower filters) or raise the limit if it is too strict.
 
   - id: error-txn-lifetime-80
     category: error_code
