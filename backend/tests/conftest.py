@@ -75,7 +75,7 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
         await conn.execute(
             text(
                 "TRUNCATE chunk_occurrences, chunks, documents, ingest_runs, ingest_outbox, "
-                "feedback, messages, tickets, llm_usage_daily RESTART IDENTITY"
+                "feedback, messages, tickets, llm_usage_daily, identifier_anchors RESTART IDENTITY"
             )
         )
     yield make_session_factory(engine)

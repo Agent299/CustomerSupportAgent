@@ -161,10 +161,15 @@ class KbIndex:
         *,
         versions: list[str] | None = None,
         k: int = 40,
+        doc_keys: list[str] | None = None,
     ) -> list[Hit]:
+        """``query`` drives BM25 and ``vector`` kNN; they need not come from the same text.
+        ``doc_keys`` limits the search to those pages."""
         filters: list[dict[str, Any]] = [{"term": {"security_level": "PUBLIC"}}]
         if versions:
             filters.append({"terms": {"versions": versions}})
+        if doc_keys:
+            filters.append({"terms": {"doc_keys": doc_keys}})
         body = {
             "size": k,
             "_source": {"excludes": ["embedding"]},

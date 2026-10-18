@@ -18,5 +18,6 @@
 | [0014](0014-render-and-free-datastores.md) | ~~Render for compute; free managed services for state~~ (superseded by 0016) |
 | [0015](0015-official-markdown-source.md) | Ingest MongoDB's official Markdown pages, not HTML |
 | [0016](0016-deployment-deferred.md) | Run locally only; defer cloud deployment |
+| [0017](0017-query-expansion-and-identifier-anchors.md) | Query expansion and identifier anchors instead of a link graph (changes Phase 3) |
 
 See [`../PLAN.md`](../PLAN.md) §4 for the summary table.

@@ -1,11 +1,19 @@
 """Answer one user message (docs/PLAN.md §8.6), headless: no persistence or transport.
 
-    rules → version → rewrite (multi-turn only) → retrieve → synthesize (streamed) → validate
+    rules → version → ┬ plan (cheapest model): standalone query + expansion terms ┐
+                      ├ embed the user's turns (kNN vector)                       ├→ search
+                      └ identifier anchors (Postgres)                             ┘
+          → synthesize (streamed) → validate
+
+The three middle steps run concurrently, so the plan call costs only the time it takes
+beyond the embedding (docs/research/graphrag-retrieval-study.md, option B). A failed or
+slow plan falls back to the raw turns.
 
 The chat API (Phase 2 · 2/3) wraps this with sessions, SSE and spend limits. The FAQ cache,
 response cache, graph expansion (Phase 3) and calibrated confidence (Phase 4) slot in later.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -14,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.genai.embeddings import Embedder
 from app.genai.llm import ChatModel, Message
@@ -24,13 +33,16 @@ from app.orchestrator.rules import (
     detect_version,
     escalation_reason,
 )
+from app.retrieval.anchors import anchor_pages
 from app.retrieval.kb_index import KbIndex
-from app.retrieval.search import Passage, retrieve
+from app.retrieval.search import Passage, search_context
 
 log = structlog.get_logger()
 
 Route = Literal["ANSWERED", "ESCALATE"]
 TokenSink = Callable[[str], Awaitable[None]]
+
+PLAN_TIMEOUT_S = 2.5  # past this, search with the raw turns rather than keep the user waiting
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,8 @@ class QueryDeps:
     index: KbIndex
     embedder: Embedder
     llm: ChatModel
+    sessions: async_sessionmaker[AsyncSession] | None = None  # None: no identifier anchors
+    expand: bool = True  # plan every turn; False: rewrite multi-turn messages only
 
 
 async def answer(
@@ -91,8 +105,7 @@ async def answer(
     if reason is not None:
         return done(AnswerResult("ESCALATE", version, escalation_reason=reason))
 
-    search_query = await _standalone_query(deps.llm, query, history) if history else query
-    passages = await retrieve(deps.index, deps.embedder, search_query, version)
+    search_query, passages = await gather_context(deps, query, history, version)
     result = AnswerResult("ANSWERED", version, search_query=search_query, passages=passages)
     if not passages:
         result.route, result.escalation_reason = "ESCALATE", "out_of_scope"
@@ -131,22 +144,57 @@ def identifiers(text: str) -> list[str]:
     return list(dict.fromkeys(m.rstrip(".") for m in _IDENTIFIER.findall(text)))
 
 
-async def _standalone_query(llm: ChatModel, query: str, history: list[Message]) -> str:
-    """Resolve references to earlier turns (T2). Falls back to the raw turns on bad output.
-
-    Identifiers from the latest message that the rewrite dropped are appended: follow-ups
-    like "E11000" are exactly what lexical search needs, and small models sometimes lose them.
-    """
-    raw = await llm.complete(
-        "rewrite", prompts.rewrite_messages(query, history), json_schema=prompts.REWRITE_SCHEMA
-    )
-    try:
-        rewritten = str(json.loads(raw)["query"]).strip()
-    except (ValueError, KeyError, TypeError):
-        rewritten = ""
-    if rewritten:
-        missing = [i for i in identifiers(query) if i.lower() not in rewritten.lower()]
-        return " ".join([rewritten, *missing])
-    log.warning("answer.rewrite_unparsed", raw=raw[:200])
+async def gather_context(
+    deps: QueryDeps, query: str, history: list[Message], version: str
+) -> tuple[str, list[Passage]]:
+    """The lexical search text and the packed passages for one message (T2 to T6)."""
     user_turns = [turn["content"] for turn in history if turn["role"] == "user"]
-    return "\n".join([*user_turns, query])
+    raw = "\n".join([*user_turns, query])
+    vector = asyncio.create_task(deps.embedder.embed([raw]))
+    anchors = asyncio.create_task(_anchors(deps, version, raw))
+    if deps.expand or history:
+        text = await _plan(deps.llm, query, history, raw)
+    else:
+        text = query
+    [embedding] = await vector
+    passages = await search_context(
+        deps.index, text=text, vector=embedding, version=version, anchors=await anchors
+    )
+    return text, passages
+
+
+async def _anchors(deps: QueryDeps, version: str, raw: str) -> list[str]:
+    """Anchored pages; an aid, so a lookup failure degrades to none rather than failing."""
+    if deps.sessions is None:
+        return []
+    try:
+        return await anchor_pages(deps.sessions, version, raw)
+    except Exception:
+        log.exception("answer.anchors_failed")
+        return []
+
+
+async def _plan(llm: ChatModel, query: str, history: list[Message], raw: str) -> str:
+    """Standalone query + expansion terms (T2) as one lexical search text; ``raw`` (the
+    user's turns) when the model fails, is slow, or returns nothing usable.
+
+    Identifiers from the latest message that the plan dropped are appended: follow-ups like
+    "E11000" are exactly what lexical search needs, and small models sometimes lose them.
+    """
+    try:
+        reply = await asyncio.wait_for(
+            llm.complete(
+                "rewrite", prompts.plan_messages(query, history), json_schema=prompts.PLAN_SCHEMA
+            ),
+            PLAN_TIMEOUT_S,
+        )
+        parsed = json.loads(reply)
+        rewritten = str(parsed["query"]).strip()
+        terms = str(parsed.get("terms", "")).strip()
+    except (TimeoutError, ValueError, KeyError, TypeError) as exc:
+        log.warning("answer.plan_failed", error=type(exc).__name__)
+        return raw
+    if not rewritten:
+        return raw
+    missing = [i for i in identifiers(query) if i.lower() not in rewritten.lower()]
+    return "\n".join(part for part in (" ".join([rewritten, *missing]), terms) if part)

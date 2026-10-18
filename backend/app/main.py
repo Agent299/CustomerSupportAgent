@@ -8,6 +8,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from opensearchpy import AsyncOpenSearch
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from valkey.asyncio import Valkey
 
 from app.chat.events import ChatEvents
@@ -43,7 +44,7 @@ def create_app(
         search = kb_index.make_client(settings)
         app.state.chat_tasks = set()
         app.state.chat = None
-        factory = query_deps or _real_query_deps(settings, search)
+        factory = query_deps or _real_query_deps(settings, search, sessions)
         if factory is not None:
             app.state.chat = ChatService(
                 sessions=sessions,
@@ -86,7 +87,9 @@ def create_app(
     return app
 
 
-def _real_query_deps(settings: Settings, search: AsyncOpenSearch) -> QueryDepsFactory | None:
+def _real_query_deps(
+    settings: Settings, search: AsyncOpenSearch, sessions: async_sessionmaker[AsyncSession]
+) -> QueryDepsFactory | None:
     """Search + OpenAI, or ``None`` (chat answers 503) while the models aren't configured."""
     if settings.openai_api_key is None or not settings.model_hard:
         log.warning("chat.disabled", reason="OPENAI_API_KEY or MODEL_HARD not set")
@@ -94,7 +97,9 @@ def _real_query_deps(settings: Settings, search: AsyncOpenSearch) -> QueryDepsFa
     index = kb_index.KbIndex(search, settings.opensearch_index, settings.embedding_dimensions)
     embedder = make_embedder(settings)
     llm = make_llm(settings)
-    return lambda: QueryDeps(index, embedder, llm.metered())
+    return lambda: QueryDeps(
+        index, embedder, llm.metered(), sessions=sessions, expand=settings.query_expansion
+    )
 
 
 app = create_app()
