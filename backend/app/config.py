@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     model_easy_reasoning: str | None = None
     model_hard_reasoning: str | None = None
     model_judge_reasoning: str | None = None
+    # Global LLM spend per UTC day; chat answers stop with a friendly message once reached.
+    daily_spend_cap_usd: float = 2.0
 
     database_url: str = "postgresql+asyncpg://support:support@localhost:5432/support"
     redis_url: str = "redis://localhost:6379/0"

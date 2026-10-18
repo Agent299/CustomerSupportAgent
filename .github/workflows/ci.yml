@@ -30,6 +30,12 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U support -d support"
           --health-interval 5s --health-timeout 3s --health-retries 20
+      valkey:
+        image: valkey/valkey:9.1.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
       opensearch:
         image: opensearchproject/opensearch:3.9.0
         env:
@@ -74,6 +80,7 @@ jobs:
           TEST_ADMIN_DSN: postgresql://support:support@localhost:5432/support
           TEST_OPENSEARCH_URL: http://localhost:9200
           TEST_KAFKA_SERVERS: localhost:19092
+          TEST_VALKEY_URL: redis://localhost:6379/15
 
   web:
     name: Web (lint, build)

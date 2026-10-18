@@ -17,6 +17,7 @@ dependencies = [
     "structlog>=26.1",
     "tiktoken>=0.14",
     "uvicorn[standard]>=0.54",
+    "valkey>=6.2",
 ]
 
 [dependency-groups]

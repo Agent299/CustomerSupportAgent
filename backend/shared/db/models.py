@@ -1,21 +1,27 @@
-"""Relational schema (docs/PLAN.md §8.4). Phase 1: knowledge-base tables."""
+"""Relational schema (docs/PLAN.md §8.4). Phase 1: knowledge base. Phase 2: chat."""
 
-from datetime import datetime
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -106,3 +112,69 @@ class IngestRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="running")  # running|success|failed
     stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class Ticket(Base):
+    """One support conversation (a chat session) and its state (docs/PLAN.md §8.7).
+
+    Until Phase 4 adds login, a session is owned by whoever holds its token; only the
+    token's hash is stored.
+    """
+
+    __tablename__ = "tickets"
+    __table_args__ = (Index("ix_tickets_status", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="OPEN")
+    version: Mapped[int] = mapped_column(Integer, default=1)  # optimistic lock
+    docs_version: Mapped[str | None] = mapped_column(String(16))
+    escalation_reason: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __mapper_args__ = {"version_id_col": version}  # noqa: RUF012 - SQLAlchemy convention
+
+
+class Message(Base):
+    """Append-only transcript. Content is PII-masked before it is stored."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'bot', 'agent', 'system')", name="ck_messages_role"),
+        Index("ix_messages_ticket_created", "ticket_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(8))
+    content_masked: Mapped[str] = mapped_column(Text)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    route: Mapped[str | None] = mapped_column(String(16))  # bot: ANSWERED | ESCALATE
+    escalation_reason: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(64))
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    first_token_ms: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+    __table_args__ = (CheckConstraint("rating IN (-1, 1)", name="ck_feedback_rating"),)
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    rating: Mapped[int] = mapped_column(SmallInteger)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LlmUsageDaily(Base):
+    """Spend per UTC day; backs the global spend cap (docs/PLAN.md §8.8)."""
+
+    __tablename__ = "llm_usage_daily"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal(0))

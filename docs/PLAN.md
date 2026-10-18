@@ -238,6 +238,12 @@ CustomerSupportAgent/
 | POST | `/api/v1/chat/messages/{id}/feedback` | `{rating: 1 or -1, comment?}` |
 | POST | `/api/v1/chat/sessions/{id}/escalate` | The user explicitly asks for a human |
 
+*As built in Phase 2 (before login exists):*
+- `POST /sessions` returns a `session_token`; every other chat call sends it in the `X-Session-Token` header, and someone else's session answers 404. Phase 4 replaces it with the logged-in user.
+- `POST /messages` returns `{message_id, stream_after}`. The widget then reads `GET /stream?after=<stream_after>` with `fetch()` (EventSource cannot send headers), so it cannot miss the start of a turn. Events live on a capped Valkey stream per session (`chat:{id}:events`, 24 h), so `Last-Event-ID` reconnects resume where they stopped. Each stream ends after the turn's `final`, `escalated` or `error` event.
+- `GET /sessions/{id}` returns the masked transcript. One turn runs at a time per session (409 otherwise).
+- The spend cap is read from `llm_usage_daily` in Postgres, so it survives a Valkey restart; per-user quotas arrive with login (Phase 4).
+
 `final` event payload (extends the chapter's response contract):
 
 ```json
