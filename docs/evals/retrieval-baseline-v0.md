@@ -4,7 +4,7 @@ The bar that Phase 2 (query rewriting, reranking) and Phase 3 (graph expansion) 
 
 | | |
 |---|---|
-| Date | 2026-10-18 |
+| Date | 2026-10-18 (after the label review below) |
 | Golden set | `backend/evals/golden/v0.yaml`: 51 examples, 41 answerable (10 must-escalate are excluded from retrieval metrics) |
 | Corpus | MongoDB docs 9.0 / 8.0 / 7.0: 4,822 active pages, 23,797 chunks (ingest run #5) |
 | Embeddings | `text-embedding-3-small`, 1536 dimensions |
@@ -17,21 +17,32 @@ A hit means at least one of the example's expected source pages appears among th
 
 | Slice | n | R@1 | R@3 | R@5 | R@10 | MRR@10 |
 |---|---|---|---|---|---|---|
-| **overall** | 41 | 0.22 | 0.44 | 0.46 | 0.56 | 0.34 |
-| complex | 15 | 0.33 | 0.67 | 0.73 | 0.80 | 0.51 |
-| error_code | 11 | 0.09 | 0.36 | 0.36 | 0.45 | 0.23 |
-| faq | 15 | 0.20 | 0.27 | 0.27 | 0.40 | 0.24 |
+| **overall** | 41 | 0.44 | 0.66 | 0.68 | 0.73 | 0.55 |
+| complex | 15 | 0.53 | 0.80 | 0.87 | 0.87 | 0.67 |
+| error_code | 11 | 0.27 | 0.55 | 0.55 | 0.64 | 0.41 |
+| faq | 15 | 0.47 | 0.60 | 0.60 | 0.67 | 0.53 |
 
-## Reading the misses
+## Label review
 
-22 of 41 examples have no expected source in the top 5. Looking at what came back instead:
+The first run (same index, same queries) scored recall@5 **0.46** and MRR@10 **0.34** overall (faq R@5 0.27). About half of the misses were labels, not retrieval: the search returned a page that answers the question as well as the labelled one, usually the tutorial instead of the API reference.
 
-- **Labels stricter than the docs (≈10).** The search returns a page that answers the question just as well as the labelled one, usually a tutorial instead of the API reference page. For example, `faq-insert-one` expects `reference/method/db.collection.insertone` and gets `tutorial/insert-documents`. Similar cases: `faq-update-set`, `faq-delete-many`, `faq-create-user`, `faq-ttl`, `faq-explain`, `faq-create-index`, `complex-embed-vs-reference`. This mostly explains why FAQ scores below complex.
-- **Genuine retrieval misses (≈12).** Off-topic pages for short or conversational queries (`faq-change-streams`, `error-e11000-multiturn`), the wrong auth mechanism (`faq-enable-auth` → LDAP), an error page instead of the topic (`error-auth-failed` → `meta/401`), and close-but-wrong references for error messages (`error-not-primary`, `error-sort-memory`, `error-max-time`, `complex-agg-memory`).
-- **Chunk crowding.** The top 5 chunks cover only 3.6 distinct pages on average, because several chunks of one long page often outrank everything else.
+The review applied one rule to the top-10 retrieved pages of **all 41** answerable examples, hits and misses alike:
 
-## Follow-ups
+1. **Deterministic:** the page must contain every key fact of the example on its own.
+2. **Judgement:** the page must be about the question, not merely mention the facts.
 
-1. **Review v0 labels:** add equally valid source pages to `expected_sources` (each checked by `eval-validate` for the key facts), then re-record this baseline. Done as a reviewed change, not silently, because it moves the bar.
-2. **Phase 2 levers** this baseline points at: page-level diversification of the top k, query rewriting for conversational and multi-turn queries, and reranking.
-3. **Phase 3:** error-code examples score lowest (R@5 0.36), which is the category graph expansion is meant to lift.
+Step 1 produced 49 candidate pages across 21 examples; step 2 kept **23 pages on 15 examples** (marked `# label review 2026-10-18` in the YAML). Examples of rejections: pages that mention `27017` but are not about the default port (`reference/mongodb-wire-protocol`), sharded- or time-series-specific variants of a general question, the LDAP tutorial for "turn on authentication", and `findOneAnd*` method pages for a `maxTimeMS` error. Pages that answer the question but phrase the key facts differently (e.g. `tutorial/update-documents` for `faq-update-set`) were **not** added: the key facts stay the contract.
+
+## Remaining misses
+
+13 of 41 examples have no expected source in the top 5:
+
+- **Conversational or vague queries pull in off-topic pages:** `faq-change-streams`, `error-e11000-multiturn`, `error-auth-failed` (returns `meta/401`), `faq-replica-set`.
+- **The right topic, the wrong page:** `faq-update-set` and `faq-delete-many` (tutorials rank above the operator and method pages), `faq-enable-auth` (LDAP setup), `complex-schema-validation` and `error-validation-failed` (neighbouring schema-validation pages), `complex-find-sort-slow` (slow-query troubleshooting instead of the ESR guideline).
+- **Error strings without their topic:** `error-e11000` (returns the generic error-code table), `error-not-primary` (read-preference pages), `faq-bulkwrite-80` (general bulk-write pages and the `db.collection.bulkWrite()` shell method rank above the 8.0 `bulkWrite` command; rank 6).
+- **Chunk crowding:** the top 5 chunks cover only 3.6 distinct pages on average, because several chunks of one long page often outrank everything else.
+
+## What this points at
+
+- **Phase 2:** page-level diversification of the top k, query rewriting for conversational and multi-turn queries, and reranking.
+- **Phase 3:** error-code examples score lowest (R@5 0.55); linking an error string to its concept page is the job graph expansion is meant to do.
